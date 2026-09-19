@@ -322,7 +322,8 @@ export function modalCliente(cliente = null) {
           <div class="form-group"><label class="form-label">Veces / semana</label>
             <input class="form-input" name="pot_veces_semana" type="number" min="1" max="7" value="${esc(c.pot_veces_semana)}"></div>
           <div class="form-group"><label class="form-label">Pagaría (€) *</label>
-            <input class="form-input" name="pot_precio" type="number" min="0" step="0.01" value="${esc(c.pot_precio)}"></div>
+            <input class="form-input" name="pot_precio" type="number" min="0" step="0.01" value="${esc(c.pot_precio)}">
+            <div class="hint" data-hint-pot></div></div>
         </div>
       </div>
 
@@ -354,11 +355,22 @@ export function modalCliente(cliente = null) {
   if (!edit) bindBono(m.el);
   pintarBloques();
 
-  // Precio estimado automático mientras no lo toque a mano
+  // El importe de un potencial NUNCA se rellena solo: hay que escribirlo (o pulsar «usar»
+  // para aceptar la tarifa estándar). Así no se guarda un importe sin darse cuenta.
   const ps = form.elements.pot_sesiones_bono, pp = form.elements.pot_precio;
-  let manual = pp.value !== '';
-  ps.addEventListener('input', () => { if (!manual) pp.value = precioBonoSugerido(ps.value) || ''; });
-  pp.addEventListener('input', () => { manual = true; });
+  const hintPot = q('[data-hint-pot]');
+  const pintarHintPot = () => {
+    const n = Number(ps.value);
+    hintPot.innerHTML = n > 0 ? `Tarifa estándar: ${esc(fmtEUR(precioBonoSugerido(n)))} · <a href="#" data-usar>usar</a>` : '';
+  };
+  ps.addEventListener('input', pintarHintPot);
+  hintPot.addEventListener('click', e => {
+    if (!e.target.closest('[data-usar]')) return;
+    e.preventDefault();
+    pp.value = precioBonoSugerido(ps.value);
+    pp.classList.remove('invalido');
+  });
+  pintarHintPot();
 
   alEnviar(m, form, async () => {
     const v = n => form.elements[n].value.trim();

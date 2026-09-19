@@ -47,7 +47,12 @@ export async function guardarCliente(c) {
   const q = id ? sb.from('clientes').update(campos).eq('id', id) : sb.from('clientes').insert(campos);
   return comprobar(await q.select().single());
 }
-export async function eliminarCliente(id) { comprobar(await sb.from('clientes').delete().eq('id', id)); }
+// La base de datos no da error si no tienes permiso para borrar: simplemente no borra nada.
+// Por eso se comprueba que realmente se haya eliminado la fila.
+export async function eliminarCliente(id) {
+  const borradas = comprobar(await sb.from('clientes').delete().eq('id', id).select('id'));
+  if (!borradas.length) throw new Error('No se ha podido eliminar la ficha. Solo el administrador puede borrar fichas.');
+}
 
 // ── Bonos ─────────────────────────────────────────────────────────────────
 export async function crearBono(b) { return comprobar(await sb.from('bonos').insert(b).select().single()); }

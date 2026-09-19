@@ -38,6 +38,7 @@ function itemHTML(c) {
     extra = `<div class="credit-text">${c.pot_precio ? '≈ ' + fmtEUR(c.pot_precio) : 'Sin estimación'}${c.pot_sesiones_bono ? ` · ${c.pot_sesiones_bono} ses/mes` : ''}</div>`;
   }
   return `<div class="client-item ${S.cliSel === c.id ? 'active' : ''} ${c.activo ? '' : 'archivado'}" data-acc="cli-sel" data-id="${c.id}">
+    ${esAdmin() ? `<button class="item-borrar" data-acc="cli-borrar" data-id="${c.id}" title="Eliminar ficha" aria-label="Eliminar ficha">🗑</button>` : ''}
     <div class="client-name">${esc(nombreCompleto(c))}</div>
     <div class="chips">${chipsTipo(c)}${esAdmin() && !entrenadorFiltroId() ? `<span class="chip" style="border-color:${entrenadorDe(c.entrenador_id)?.color};color:${entrenadorDe(c.entrenador_id)?.color}">${esc(entrenadorDe(c.entrenador_id)?.nombre || '')}</span>` : ''}${c.activo ? '' : '<span class="chip gris">ARCHIVADO</span>'}${c.activo && camposPendientes(c).length ? '<span class="chip pendiente" title="Faltan datos por completar">INFO PENDIENTE</span>' : ''}</div>
     ${extra}</div>`;
@@ -83,7 +84,7 @@ function fichaHTML(c) {
       <button class="btn btn-secondary btn-sm btn-w" data-acc="cli-generar" data-id="${c.id}">⚙ Generar sesiones</button>`
       : `<button class="btn btn-primary btn-sm btn-w" data-acc="cli-convertir" data-id="${c.id}">✔ Convertir en cliente</button>`}
     <button class="btn btn-secondary btn-sm btn-w" data-acc="cli-archivar" data-id="${c.id}">${c.activo ? '🗄 Archivar' : '↩ Reactivar'}</button>
-    ${esAdmin() ? `<button class="btn btn-danger btn-sm btn-w" data-acc="cli-borrar" data-id="${c.id}">✕ Eliminar</button>` : ''}`;
+    ${esAdmin() ? `<button class="btn btn-danger btn-sm btn-w" data-acc="cli-borrar" data-id="${c.id}">🗑 Eliminar ficha</button>` : ''}`;
 
   let cuerpo = '';
   if (efe) {
@@ -231,7 +232,7 @@ export const accionesClientes = {
     });
     if (!ok) return;
     await S.api.eliminarCliente(c.id);
-    S.cliSel = null;
+    if (S.cliSel === c.id) S.cliSel = null;
     await bus.recargar();
     toast('Ficha eliminada');
   },
