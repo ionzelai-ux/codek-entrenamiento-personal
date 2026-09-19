@@ -169,6 +169,10 @@ a.meta-chip:hover { border-color: var(--red); color: var(--text); }
 .alert { padding: 10px 14px; margin-bottom: 12px; font-family: var(--mono); font-size: 11px; letter-spacing: 1px; border-left: 3px solid; }
 .alert-warn { background: rgba(200,160,48,.1); border-color: var(--yellow); color: var(--yellow); }
 .alert-danger { background: rgba(139,32,32,.15); border-color: var(--red); color: #e06060; }
+.alert-ok { background: rgba(76,175,80,.1); border-color: var(--green-light); color: var(--green-light); }
+.ah-panel { max-width: 900px; }
+.ah-fila { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fila-rack td { background: rgba(200,160,48,.08); }
 .alert-info { background: rgba(74,159,212,.08); border-color: var(--blue-light); color: var(--blue-light); }
 
 .bono-history { font-size: 13px; }

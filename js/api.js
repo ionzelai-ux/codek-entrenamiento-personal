@@ -32,6 +32,18 @@ export async function perfilActual() {
 }
 export async function cerrarSesion() { await sb.auth.signOut(); }
 
+// ── AimHarder (a través de la función de Supabase; los tokens nunca llegan al navegador) ──
+export async function consultarAimHarder(cuerpo) {
+  const { data, error } = await sb.functions.invoke('aimharder-probe', { body: cuerpo });
+  if (error) {
+    let detalle = error.message;
+    try { detalle = (await error.context.json()).error || detalle; } catch { /* sin detalle */ }
+    if (/not found|404/i.test(String(detalle))) detalle = 'La función «aimharder-probe» aún no está desplegada en Supabase.';
+    throw new Error(detalle);
+  }
+  return data;
+}
+
 // ── Entrenadores ──────────────────────────────────────────────────────────
 export async function listarEntrenadores() {
   return comprobar(await sb.from('perfiles').select('*').eq('rol', 'entrenador').order('nombre'));

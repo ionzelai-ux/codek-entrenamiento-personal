@@ -44,6 +44,19 @@ Repo → Settings → Pages → *Deploy from a branch* → `main` / `/ (root)`. 
 Usuario a secas (`admin`, `eduardo`, `jesus`) y la contraseña elegida. Para añadir otro entrenador: crear su usuario
 en Authentication (`<usuario>@codek-ep.app`) y añadir su bloque `insert` en un script como `02_usuarios.sql`.
 
+## Integración con AimHarder (racks del entrenamiento personal)
+Objetivo: cada sesión de entrenamiento personal ocupa un hueco del «Rack libre» en AimHarder (reserva como *invitado*,
+p. ej. «PT Eduardo»). API oficial: https://aimharder.com/api_doc/aimharder/index.html
+
+**Fase 1 (solo lectura)** — pestaña «AimHarder» (solo administrador): comprueba la conexión y lista las clases de un día.
+1. Secretos en Supabase (Edge Functions → Secrets): `AIMHARDER_ACCESS_TOKEN` y `AIMHARDER_REFRESH_TOKEN`.
+2. `sql/04_aimharder_tokens.sql` (tabla privada donde la función guarda los tokens renovados).
+3. Desplegar `supabase/functions/aimharder-probe/index.ts` con el nombre `aimharder-probe` (Verify JWT activado).
+
+Seguridad: los tokens nunca van en el código ni llegan al navegador; la función solo responde al administrador con
+sesión iniciada (la anon key pública recibe 403). AimHarder entrega una pareja nueva de tokens en cada renovación y la
+anterior deja de valer; si se pulsa «Refrescar tokens» en AimHarder hay que actualizar los secretos y vaciar la tabla.
+
 ## Modo demo
 Abre `index.html?demo` desde un servidor estático (`python -m http.server`): datos ficticios en memoria, usuarios
 `admin` / `eduardo` / `jesus`, contraseña `demo`. No toca Supabase.

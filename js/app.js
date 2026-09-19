@@ -5,12 +5,13 @@ import { esc, toast } from './util.js';
 import { renderCalendario, cargarCalendario, accionesCalendario, iniciarArrastre } from './vista-calendario.js';
 import { renderClientes, alBuscar, accionesClientes } from './vista-clientes.js';
 import { renderResumen, accionesResumen } from './vista-resumen.js';
+import { renderAimHarder, accionesAimHarder } from './vista-aimharder.js';
 
 const DEMO = new URLSearchParams(location.search).has('demo');
 const $ = id => document.getElementById(id);
 const vistaEl = $('vista');
 
-const VISTAS = { calendario: renderCalendario, clientes: renderClientes, resumen: renderResumen };
+const VISTAS = { calendario: renderCalendario, clientes: renderClientes, resumen: renderResumen, aimharder: renderAimHarder };
 const pintar = () => VISTAS[S.vista](vistaEl);
 
 bus.repintar = pintar;
@@ -22,10 +23,10 @@ bus.recargar = async () => {
 // ── Cabecera ──────────────────────────────────────────────────────────────
 function pintarCabecera() {
   const admin = esAdmin();
-  const tabs = [['calendario', 'Calendario'], ['clientes', 'Clientes'], ...(admin ? [['resumen', 'Resumen']] : [])];
+  const tabs = [['calendario', 'Calendario'], ['clientes', 'Clientes'], ...(admin ? [['resumen', 'Resumen'], ['aimharder', 'AimHarder']] : [])];
   $('nav').innerHTML = tabs.map(([v, l]) =>
     `<button class="nav-tab ${S.vista === v ? 'active' : ''}" data-acc="vista" data-v="${v}">${l}</button>`).join('');
-  const selector = admin && S.vista !== 'resumen'
+  const selector = admin && S.vista !== 'resumen' && S.vista !== 'aimharder'
     ? `<select id="selEntr" class="form-input sel-entr" aria-label="Entrenador">
          <option value="todos">Todos los entrenadores</option>
          ${S.entrenadores.map(e => `<option value="${e.id}" ${S.filtroEntr === e.id ? 'selected' : ''}>${esc(e.nombre)}</option>`).join('')}
@@ -37,7 +38,7 @@ function pintarCabecera() {
 
 const GLOBALES = {
   vista: t => {
-    if (t.dataset.v === 'resumen' && !esAdmin()) return;
+    if ((t.dataset.v === 'resumen' || t.dataset.v === 'aimharder') && !esAdmin()) return;
     S.vista = t.dataset.v;
     pintarCabecera();
     return S.vista === 'calendario' ? cargarCalendario() : pintar();
@@ -49,7 +50,7 @@ const GLOBALES = {
     mostrarLogin();
   },
 };
-const ACCIONES = { ...GLOBALES, ...accionesCalendario, ...accionesClientes, ...accionesResumen };
+const ACCIONES = { ...GLOBALES, ...accionesCalendario, ...accionesClientes, ...accionesResumen, ...accionesAimHarder };
 
 document.addEventListener('click', async e => {
   const t = e.target.closest('[data-acc]');

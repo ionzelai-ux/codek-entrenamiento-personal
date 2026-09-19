@@ -63,6 +63,19 @@ export async function perfilActual() {
 }
 export async function cerrarSesion() { actual = null; sessionStorage.removeItem('demo_user'); }
 
+// Simulación de la función de AimHarder (modo demo): un día tipo con clases y racks de 4 plazas.
+export async function consultarAimHarder(cuerpo) {
+  if (cuerpo.accion === 'estado') {
+    return { ok: true, http: 200, mensaje: 'Conexión correcta con AimHarder (demo)', caducidad: { access: '2026-12-31 10:00:00', refresh: '2027-03-31 10:00:00' } };
+  }
+  const horas = ['08:00', '09:00', '10:00', '11:00', '12:00', '17:00', '18:00', '19:00'];
+  const clases = [
+    { schedule_id: 501, hora: '10:00', nombre: 'Entrenamiento Funcional + Calistenia', duracion: '01:00', aforo: 12, sala: 'Sala principal', aforo_sala: 12, class_id: 1, cancelada: 0, es_rack: false },
+    ...horas.map((h, i) => ({ schedule_id: 600 + i, hora: h, nombre: 'Rack libre', duracion: '01:00', aforo: 4, sala: 'Racks', aforo_sala: 4, class_id: 2, cancelada: 0, es_rack: true })),
+  ].sort((a, b) => a.hora.localeCompare(b.hora));
+  return { ok: true, fecha: cuerpo.fecha, clases, resumen: { total: clases.length, rack: horas.length } };
+}
+
 export async function listarEntrenadores() {
   const todos = perfiles.filter(p => p.rol === 'entrenador');
   return clonar(actual.rol === 'admin' ? todos : todos.filter(p => p.id === actual.id));
