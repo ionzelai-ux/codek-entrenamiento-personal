@@ -54,6 +54,9 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
 - **Tarifas estándar** (solo sugerencia, siempre editables): 4 → 45 €/ses · 8 → 42 · 12 → 40 · 16 → 38 · 40 → 37.
 - **Pago**: cada bono tiene fecha de pago; si es futura figura como «pago programado» hasta que llega el día.
   También guarda el **método de pago** (efectivo, tarjeta o transferencia), obligatorio al crear un bono.
+- **Mover sesiones**: en la vista semanal se arrastra un bloque a otra hora (tramos de 30 min) o a otro día de la semana.
+  Avisa si hay solape, se cancela con Esc o soltando fuera del calendario, y al fijar la hora se quita la nota
+  «Hora no registrada». Solo con ratón; en pantalla táctil se cambia desde el formulario de la sesión.
 - **Solapes**: al crear una sesión o generar las de los días fijos se avisa si ese entrenador ya tiene a alguien a esa hora.
 - **Campos obligatorios** (sin ellos no se guarda, y se avisa de todos los que faltan a la vez): nombre, teléfono, tipo
   (potencial/cliente) y origen; en un potencial, sesiones e importe; en un cliente nuevo, todo el bono (sesiones, importe,

@@ -2,7 +2,7 @@
 import { SUPABASE_ANON_KEY } from './config.js';
 import { S, bus, esAdmin, clienteDe } from './store.js';
 import { esc, toast } from './util.js';
-import { renderCalendario, cargarCalendario, accionesCalendario } from './vista-calendario.js';
+import { renderCalendario, cargarCalendario, accionesCalendario, iniciarArrastre } from './vista-calendario.js';
 import { renderClientes, alBuscar, accionesClientes } from './vista-clientes.js';
 import { renderResumen, accionesResumen } from './vista-resumen.js';
 
@@ -65,6 +65,7 @@ document.addEventListener('change', async e => {
   if (S.cliSel && S.filtroEntr !== 'todos' && clienteDe(S.cliSel)?.entrenador_id !== S.filtroEntr) S.cliSel = null;
   try { await (S.vista === 'calendario' ? cargarCalendario() : pintar()); } catch (err) { toast(err.message, true); }
 });
+iniciarArrastre();
 window.addEventListener('unhandledrejection', e => { toast(e.reason?.message || 'Error inesperado', true); });
 
 // ── Login ─────────────────────────────────────────────────────────────────

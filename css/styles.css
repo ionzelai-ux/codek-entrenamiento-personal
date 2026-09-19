@@ -232,7 +232,12 @@ a.meta-chip:hover { border-color: var(--red); color: var(--text); }
   background-image: repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--hpx) - 1px), var(--border) calc(var(--hpx) - 1px), var(--border) var(--hpx)); }
 .wk-col.hoy { background-color: rgba(200,160,48,.05); }
 .blk { position: absolute; padding: 2px 5px; font-size: 11px; overflow: hidden; border-left: 3px solid; cursor: pointer; line-height: 1.25; }
+.blk { cursor: grab; user-select: none; -webkit-user-select: none; }
 .blk:hover { filter: brightness(1.25); z-index: 2; }
+.blk.arrastrando { opacity: .3; }
+.blk-ghost { pointer-events: none; z-index: 30; left: 2px !important; width: calc(100% - 4px) !important; box-shadow: 0 6px 18px rgba(0,0,0,.7); outline: 1px solid var(--text); filter: none; }
+body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important; user-select: none !important; }
+.leg-ayuda { margin-left: auto; font-style: italic; }
 .blk-h { font-family: var(--mono); font-size: 10px; opacity: .9; white-space: nowrap; }
 .blk-n { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
