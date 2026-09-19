@@ -3,7 +3,7 @@
 // solo devuelve lo que ese usuario puede ver.
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, LOGIN_DOMAIN } from './config.js';
-import { normalizaUsuario } from './logica.js';
+import { nombreUsuario } from './logica.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -15,7 +15,7 @@ const hora = s => ({ ...s, hora: String(s.hora).slice(0, 5) });
 
 // ── Sesión ────────────────────────────────────────────────────────────────
 export async function iniciarSesion(usuario, clave) {
-  const email = `${normalizaUsuario(usuario)}@${LOGIN_DOMAIN}`;
+  const email = `${nombreUsuario(usuario)}@${LOGIN_DOMAIN}`;
   const { error } = await sb.auth.signInWithPassword({ email, password: clave });
   if (error) throw new Error('Usuario o contraseña incorrectos');
   return perfilActual();

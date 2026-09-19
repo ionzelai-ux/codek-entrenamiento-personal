@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  addDias, diaSemana, lunesDe, primerDiaMes, ultimoDiaMes, edad, normalizaUsuario,
+  addDias, diaSemana, lunesDe, primerDiaMes, ultimoDiaMes, edad, normalizaUsuario, nombreUsuario,
   precioHoraSugerido, precioBonoSugerido, estadoEfectivo, creditos, estadoPago,
   solapan, buscarConflictos, generarFechas, repartirCarriles, agrupar, sumar,
 } from '../js/logica.js';
@@ -22,6 +22,12 @@ test('edad y normalización de usuario', () => {
   assert.equal(edad('1990-09-19', '2026-09-19'), 36);
   assert.equal(edad(''), null);
   assert.equal(normalizaUsuario('  Jesús '), 'jesus');
+});
+
+test('nombre de usuario: acepta "eduardo" y también "eduardo@dominio"', () => {
+  assert.equal(nombreUsuario('Eduardo'), 'eduardo');
+  assert.equal(nombreUsuario('admin@codek-ep.app'), 'admin');
+  assert.equal(nombreUsuario(' Jesús@Codek-EP.app '), 'jesus');
 });
 
 test('tarifas sugeridas según los precios estándar', () => {

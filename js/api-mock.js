@@ -1,6 +1,6 @@
 // Modo demo (abre la app con ?demo): mismos métodos que api.js pero en memoria,
 // con datos ficticios y sin tocar Supabase. Usuarios: admin / eduardo / jesus · clave: demo
-import { hoyISO, addDias, lunesDe, normalizaUsuario } from './logica.js';
+import { hoyISO, addDias, lunesDe, nombreUsuario } from './logica.js';
 
 let seq = 1;
 const nuevoId = () => 'demo-' + seq++;
@@ -50,7 +50,7 @@ const visibles = () => (actual.rol === 'admin' ? clientes : clientes.filter(c =>
 const idsVisibles = () => new Set(visibles().map(c => c.id));
 
 export async function iniciarSesion(usuario, clave) {
-  const p = perfiles.find(x => x.usuario === normalizaUsuario(usuario));
+  const p = perfiles.find(x => x.usuario === nombreUsuario(usuario));
   if (!p || clave !== 'demo') throw new Error('Usuario o contraseña incorrectos (demo: admin / eduardo / jesus · clave demo)');
   actual = p;
   sessionStorage.setItem('demo_user', p.id);

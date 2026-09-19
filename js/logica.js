@@ -23,6 +23,8 @@ export function edad(iso, hoy = hoyISO()) {
   return e;
 }
 export const normalizaUsuario = u => String(u).normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase().replace(/\s+/g, '');
+// Acepta "eduardo" o "eduardo@cualquier.cosa" y se queda con la parte del usuario.
+export const nombreUsuario = u => normalizaUsuario(u).split('@')[0];
 
 // ── Tarifas ───────────────────────────────────────────────────────────────
 export function precioHoraSugerido(n) {
