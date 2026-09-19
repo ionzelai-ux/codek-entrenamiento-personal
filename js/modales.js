@@ -1,7 +1,7 @@
 // Formularios en modal: sesión, ficha de cliente, convertir potencial, nuevo bono y
 // generación de sesiones desde días fijos (con aviso de solapes).
 import { S, bus, esAdmin, entrenadorDe, nombreCompleto, clienteDe, entrenadorFiltroId } from './store.js';
-import { esc, abrirModal, dialogo, errorEnModal, toast, fmtFechaDia, fmtEUR, DIAS_SEM, textoDias } from './util.js';
+import { esc, abrirModal, dialogo, errorEnModal, toast, fmtFechaDia, fmtEUR, DIAS_SEM, textoDias, METODOS_PAGO } from './util.js';
 import {
   hoyISO, precioBonoSugerido, precioHoraSugerido, buscarConflictos, generarFechas,
   creditos, estadoEfectivo, ocupaCredito,
@@ -43,9 +43,15 @@ function camposBono({ sesiones = '', precio = '', fechaPago = hoyISO(), fechaIni
         <div class="hint">Hoy, o una fecha futura si paga más adelante</div>
       </div>
     </div>
-    <div class="form-group">
-      <label class="form-label">Fecha de inicio del bono</label>
-      <input class="form-input" name="b_fecha_inicio" type="date" value="${fechaInicio}">
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Método de pago *</label>
+        ${segHTML('metodo_pago', METODOS_PAGO, '')}
+      </div>
+      <div class="form-group">
+        <label class="form-label">Fecha de inicio del bono</label>
+        <input class="form-input" name="b_fecha_inicio" type="date" value="${fechaInicio}">
+      </div>
     </div>`;
 }
 function bindBono(root) {
@@ -76,8 +82,10 @@ function leerBono(root) {
   if (!(sesiones > 0)) throw new Error('Indica cuántas sesiones tiene el bono');
   if (v('b_precio') === '' || !(Number(v('b_precio')) >= 0)) throw new Error('Indica el precio del bono');
   if (!v('b_fecha_pago')) throw new Error('Indica la fecha de pago');
+  const metodo_pago = segVal(root, 'metodo_pago');
+  if (!metodo_pago) throw new Error('Indica el método de pago (efectivo, tarjeta o transferencia)');
   if (!v('b_fecha_inicio')) throw new Error('Indica la fecha de inicio del bono');
-  return { sesiones, precio: Number(v('b_precio')), fecha_pago: v('b_fecha_pago'), fecha_inicio: v('b_fecha_inicio') };
+  return { sesiones, precio: Number(v('b_precio')), fecha_pago: v('b_fecha_pago'), fecha_inicio: v('b_fecha_inicio'), metodo_pago };
 }
 
 function camposDias(dias = []) {
@@ -374,7 +382,7 @@ export function modalConvertir(c) {
       ${acciones('Convertir')}
     </form>`, 'modal-lg');
   const form = m.el.querySelector('form');
-  bindCerrar(m); bindBono(m.el); bindBloqueDias(m.el);
+  bindCerrar(m); bindSeg(m.el); bindBono(m.el); bindBloqueDias(m.el);
   alEnviar(m, form, async () => {
     const bono = leerBono(m.el);
     const dias = leerBloqueDias(m.el);
@@ -402,7 +410,7 @@ export function modalBono(c) {
       ${acciones('Añadir bono')}
     </form>`, 'modal-lg');
   const form = m.el.querySelector('form');
-  bindCerrar(m); bindBono(m.el);
+  bindCerrar(m); bindSeg(m.el); bindBono(m.el);
   alEnviar(m, form, async () => {
     const bono = leerBono(m.el);
     const generar = !!m.el.querySelector('[name=generar]')?.checked;

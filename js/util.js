@@ -11,6 +11,8 @@ export const fmtFechaDia = iso => { const d = parseISO(iso); return `${DIAS_CORT
 export const DIAS_SEM = [[1, 'L', 'Lunes'], [2, 'M', 'Martes'], [3, 'X', 'Miércoles'], [4, 'J', 'Jueves'], [5, 'V', 'Viernes'], [6, 'S', 'Sábado'], [7, 'D', 'Domingo']];
 export const textoDias = dias => (dias || []).slice().sort((a, b) => a.dia - b.dia || a.hora.localeCompare(b.hora))
   .map(d => `${DIAS_SEM.find(x => x[0] === d.dia)?.[1] || '?'} ${d.hora}`).join(' · ');
+export const METODOS_PAGO = [['efectivo', '💶 Efectivo'], ['tarjeta', '💳 Tarjeta'], ['transferencia', '🏦 Transferencia']];
+export const etiquetaMetodo = m => METODOS_PAGO.find(x => x[0] === m)?.[1] || '';
 export const fmtEUR = n => Number(n || 0).toLocaleString('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 });
 
 export function toast(msg, error = false) {

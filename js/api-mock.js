@@ -20,8 +20,8 @@ function cliente(datos) {
   clientes.push(c);
   return c;
 }
-function bono(c, sesionesN, precio, pago, inicio) {
-  bonos.push({ id: nuevoId(), cliente_id: c.id, sesiones: sesionesN, precio, fecha_pago: pago, fecha_inicio: inicio });
+function bono(c, sesionesN, precio, pago, inicio, metodo_pago = 'tarjeta') {
+  bonos.push({ id: nuevoId(), cliente_id: c.id, sesiones: sesionesN, precio, fecha_pago: pago, fecha_inicio: inicio, metodo_pago });
 }
 function sesion(c, fecha, hora, estado = 'reservada') {
   sesiones.push({ id: nuevoId(), cliente_id: c.id, bono_id: null, fecha, hora, duracion_min: 60, estado, nota: '' });
@@ -35,12 +35,12 @@ function sesion(c, fecha, hora, estado = 'reservada') {
   [-7, -5].forEach(n => sesion(ana, addDias(lun, n), '10:00', 'hecha'));
   [0, 2, 7].forEach(n => sesion(ana, addDias(lun, n), '10:00'));
   const luis = cliente({ entrenador_id: 'p-edu', nombre: 'Luis', apellidos: 'Ejemplo Gil', estado: 'efectivo', origen: 'externo', telefono: '600 000 002' });
-  bono(luis, 12, 480, addDias(hoy, 12), addDias(hoy, 12));
+  bono(luis, 12, 480, addDias(hoy, 12), addDias(hoy, 12), 'transferencia');
   sesion(luis, addDias(lun, 0), '18:00');
   sesion(luis, addDias(lun, 3), '17:30');
   cliente({ entrenador_id: 'p-edu', nombre: 'Marta', apellidos: 'Prueba', estado: 'potencial', origen: 'codek', pot_sesiones_bono: 8, pot_veces_semana: 2, pot_precio: 336, email: 'marta@ejemplo.com' });
   const pablo = cliente({ entrenador_id: 'p-jes', nombre: 'Pablo', apellidos: 'Demo Sanz', estado: 'efectivo', origen: 'externo', dias_fijos: [{ dia: 1, hora: '10:00' }, { dia: 4, hora: '19:00' }] });
-  bono(pablo, 16, 608, addDias(lun, -3), addDias(lun, -3));
+  bono(pablo, 16, 608, addDias(lun, -3), addDias(lun, -3), 'efectivo');
   sesion(pablo, addDias(lun, 0), '10:00');
   sesion(pablo, addDias(lun, 3), '19:00');
   cliente({ entrenador_id: 'p-jes', nombre: 'Lucía', apellidos: 'Ejemplo', estado: 'potencial', origen: 'externo', pot_sesiones_bono: 12, pot_veces_semana: 3, pot_precio: 480 });

@@ -1,6 +1,6 @@
 // Clientes: lista con filtros + ficha (datos, bonos, días fijos, créditos y sesiones).
 import { S, bus, esAdmin, entrenadorDe, nombreCompleto, clienteDe, entrenadorFiltroId } from './store.js';
-import { esc, dialogo, toast, fmtEUR, fmtFecha, fmtFechaDia, textoDias } from './util.js';
+import { esc, dialogo, toast, fmtEUR, fmtFecha, fmtFechaDia, textoDias, etiquetaMetodo } from './util.js';
 import { hoyISO, creditos, estadoEfectivo, estadoPago, edad } from './logica.js';
 import { modalCliente, modalConvertir, modalBono, modalGenerar, modalSesion, cambiarEstadoSesion } from './modales.js';
 
@@ -86,7 +86,8 @@ function fichaHTML(c) {
     const bonos = [...(c.bonos || [])].sort((a, b) => b.fecha_pago.localeCompare(a.fecha_pago)).map(b => `
       <div class="bono-row">
         <span>${fmtFecha(b.fecha_pago)} · <b>${b.sesiones}</b> sesiones · ${fmtEUR(b.precio / b.sesiones)}/ses
-          <span class="chip ${estadoPago(b, hoy) === 'cobrado' ? 'verde' : 'amarillo'}">${estadoPago(b, hoy) === 'cobrado' ? 'COBRADO' : 'PAGO PROGRAMADO'}</span></span>
+          <span class="chip ${estadoPago(b, hoy) === 'cobrado' ? 'verde' : 'amarillo'}">${estadoPago(b, hoy) === 'cobrado' ? 'COBRADO' : 'PAGO PROGRAMADO'}</span>
+          ${b.metodo_pago ? `<span class="chip">${etiquetaMetodo(b.metodo_pago)}</span>` : ''}</span>
         <span><span style="color:var(--green-light)">${fmtEUR(b.precio)}</span>
           <button class="sess-del" data-acc="bono-borrar" data-id="${b.id}" title="Eliminar bono">✕</button></span>
       </div>`).join('') || '<span style="opacity:.4">Sin bonos</span>';

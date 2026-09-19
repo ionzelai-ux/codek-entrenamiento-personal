@@ -49,6 +49,7 @@ create table public.bonos (
   precio       numeric(9,2) not null check (precio >= 0),
   fecha_pago   date not null,       -- puede ser hoy o futura ("empezamos el mes que viene")
   fecha_inicio date not null,
+  metodo_pago  text check (metodo_pago in ('efectivo', 'tarjeta', 'transferencia')),
   created_at   timestamptz not null default now()
 );
 create index bonos_cliente_idx on public.bonos(cliente_id);

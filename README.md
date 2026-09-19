@@ -32,6 +32,7 @@ tests/                node --test tests/*.test.js
    `admin@codek-ep.app` · `eduardo@codek-ep.app` · `jesus@codek-ep.app`
    Si había usuarios antiguos, elimínalos.
 5. Ejecuta `sql/02_usuarios.sql` (debe devolver 3 filas).
+   (`sql/03_metodo_pago.sql` solo hace falta si ejecutaste el 01 antes de que existiera el método de pago.)
 6. **Authentication → Sign In / Providers**: desactiva *Allow new users to sign up* (nadie más debe poder registrarse).
 7. **Project Settings → API**: copia la **anon / publishable key** en `js/config.js` (`SUPABASE_ANON_KEY`). Nunca pegues la `service_role`.
 
@@ -52,5 +53,6 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   hecha (*auto*). «No vino» no consume.
 - **Tarifas estándar** (solo sugerencia, siempre editables): 4 → 45 €/ses · 8 → 42 · 12 → 40 · 16 → 38 · 40 → 37.
 - **Pago**: cada bono tiene fecha de pago; si es futura figura como «pago programado» hasta que llega el día.
+  También guarda el **método de pago** (efectivo, tarjeta o transferencia), obligatorio al crear un bono.
 - **Solapes**: al crear una sesión o generar las de los días fijos se avisa si ese entrenador ya tiene a alguien a esa hora.
 - **Origen**: *Codek* = captado por la empresa · *Externo* = lo trae el entrenador.
