@@ -23,22 +23,49 @@ function bindSeg(root, onChange) {
 }
 const segVal = (root, nombre) => root.querySelector(`.seg[data-seg="${nombre}"] button.on`)?.dataset.v || '';
 
-function camposBono({ sesiones = '', precio = '', fechaPago = hoyISO(), fechaInicio = hoyISO() } = {}) {
+// Validación de campos obligatorios: se recogen TODOS los que faltan, se marcan en rojo
+// y se avisa con un solo mensaje ("No has completado 3 campos: …").
+function nuevoValidador(root) {
+  const faltan = [];
+  return {
+    exige(ok, campo, etiqueta) { if (!ok) faltan.push({ campo, etiqueta }); },
+    cierra() {
+      root.querySelectorAll('.invalido').forEach(e => e.classList.remove('invalido'));
+      if (!faltan.length) return;
+      for (const { campo } of faltan) {
+        (root.querySelector(`[name="${campo}"]`) || root.querySelector(`.seg[data-seg="${campo}"]`))?.classList.add('invalido');
+      }
+      root.querySelector('.invalido')?.scrollIntoView({ block: 'center' });
+      const n = faltan.length;
+      throw new Error(`No has completado ${n} campo${n === 1 ? '' : 's'} obligatorio${n === 1 ? '' : 's'}: ${faltan.map(f => f.etiqueta).join(', ')}.`);
+    },
+  };
+}
+// Al corregir un campo marcado en rojo, se le quita la marca.
+function limpiarInvalidos(root) {
+  root.addEventListener('input', e => e.target.classList?.remove('invalido'));
+  root.addEventListener('click', e => {
+    e.target.closest('.seg')?.classList.remove('invalido');
+    if (e.target.closest('.bono-opt')) root.querySelector('[name=b_sesiones]')?.classList.remove('invalido');
+  });
+}
+
+function camposBono({ sesiones = '', precio = '', fechaPago = hoyISO(), fechaInicio = hoyISO(), metodoPago = '' } = {}) {
   return `
     <div class="form-group">
-      <label class="form-label">Sesiones del bono</label>
+      <label class="form-label">Sesiones del bono *</label>
       <div class="bono-grid">${OPCIONES_BONO.map(n =>
         `<button type="button" class="bono-opt" data-n="${n}"><span class="bono-opt-num">${n}</span><span class="bono-opt-lbl">sesiones</span></button>`).join('')}</div>
       <input class="form-input" name="b_sesiones" type="number" min="1" step="1" value="${esc(sesiones)}" placeholder="Otro nº de sesiones">
     </div>
     <div class="form-row">
       <div class="form-group">
-        <label class="form-label">Precio total del bono (€)</label>
+        <label class="form-label">Precio total del bono (€) *</label>
         <input class="form-input" name="b_precio" type="number" min="0" step="0.01" value="${esc(precio)}">
         <div class="hint" data-hint-precio></div>
       </div>
       <div class="form-group">
-        <label class="form-label">Fecha de pago</label>
+        <label class="form-label">Fecha de pago *</label>
         <input class="form-input" name="b_fecha_pago" type="date" value="${fechaPago}">
         <div class="hint">Hoy, o una fecha futura si paga más adelante</div>
       </div>
@@ -46,10 +73,10 @@ function camposBono({ sesiones = '', precio = '', fechaPago = hoyISO(), fechaIni
     <div class="form-row">
       <div class="form-group">
         <label class="form-label">Método de pago *</label>
-        ${segHTML('metodo_pago', METODOS_PAGO, '')}
+        ${segHTML('metodo_pago', METODOS_PAGO, metodoPago)}
       </div>
       <div class="form-group">
-        <label class="form-label">Fecha de inicio del bono</label>
+        <label class="form-label">Fecha de inicio del bono *</label>
         <input class="form-input" name="b_fecha_inicio" type="date" value="${fechaInicio}">
       </div>
     </div>`;
@@ -76,16 +103,17 @@ function bindBono(root) {
   pre.addEventListener('input', () => { manual = true; pintar(); });
   pintar();
 }
-function leerBono(root) {
+function leerBono(root, val) {
   const v = n => root.querySelector(`[name=${n}]`).value;
   const sesiones = parseInt(v('b_sesiones'), 10);
-  if (!(sesiones > 0)) throw new Error('Indica cuántas sesiones tiene el bono');
-  if (v('b_precio') === '' || !(Number(v('b_precio')) >= 0)) throw new Error('Indica el precio del bono');
-  if (!v('b_fecha_pago')) throw new Error('Indica la fecha de pago');
+  const precio = v('b_precio') === '' ? NaN : Number(v('b_precio'));
   const metodo_pago = segVal(root, 'metodo_pago');
-  if (!metodo_pago) throw new Error('Indica el método de pago (efectivo, tarjeta o transferencia)');
-  if (!v('b_fecha_inicio')) throw new Error('Indica la fecha de inicio del bono');
-  return { sesiones, precio: Number(v('b_precio')), fecha_pago: v('b_fecha_pago'), fecha_inicio: v('b_fecha_inicio'), metodo_pago };
+  val.exige(sesiones > 0, 'b_sesiones', 'sesiones del bono');
+  val.exige(precio >= 0, 'b_precio', 'importe del bono');
+  val.exige(v('b_fecha_pago'), 'b_fecha_pago', 'fecha de pago');
+  val.exige(v('b_fecha_inicio'), 'b_fecha_inicio', 'fecha de inicio');
+  val.exige(metodo_pago, 'metodo_pago', 'método de pago');
+  return { sesiones, precio, fecha_pago: v('b_fecha_pago'), fecha_inicio: v('b_fecha_inicio'), metodo_pago };
 }
 
 function camposDias(dias = []) {
@@ -124,15 +152,16 @@ function bindBloqueDias(root) {
   chk.addEventListener('change', () => { wrap.hidden = !chk.checked; if (gen) gen.checked = chk.checked; });
   bindDias(wrap);
 }
-function leerBloqueDias(root) {
+function leerBloqueDias(root, val) {
   if (!root.querySelector('[name=dias_on]').checked) return [];
   const d = leerDias(root.querySelector('[data-dias-wrap]'));
-  if (!d.length) throw new Error('Marca al menos un día fijo, o desmarca "días fijos"');
+  val.exige(d.length > 0, 'dias_on', 'algún día fijo (o desmarca «días fijos»)');
   return d;
 }
 
 // Envuelve un submit: bloquea el botón, muestra errores dentro del modal.
 function alEnviar(m, form, fn) {
+  limpiarInvalidos(m.el);
   form.addEventListener('submit', async e => {
     e.preventDefault();
     const btn = form.querySelector('button[type=submit]');
@@ -260,12 +289,13 @@ export function modalCliente(cliente = null) {
   const m = abrirModal(`
     <div class="modal-title">${edit ? 'Editar ficha' : 'Nueva ficha'}</div>
     <form novalidate>
+      <p class="hint" style="margin:-8px 0 14px">Los campos con <b>*</b> son obligatorios. Lo demás puedes dejarlo para después: la ficha quedará marcada como «Info pendiente».</p>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Nombre *</label><input class="form-input" name="nombre" value="${esc(c.nombre)}" autocomplete="off"></div>
-        <div class="form-group"><label class="form-label">Apellidos *</label><input class="form-input" name="apellidos" value="${esc(c.apellidos)}" autocomplete="off"></div>
+        <div class="form-group"><label class="form-label">Apellidos</label><input class="form-input" name="apellidos" value="${esc(c.apellidos)}" autocomplete="off"></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">Teléfono</label><input class="form-input" name="telefono" type="tel" value="${esc(c.telefono)}"></div>
+        <div class="form-group"><label class="form-label">Teléfono *</label><input class="form-input" name="telefono" type="tel" value="${esc(c.telefono)}"></div>
         <div class="form-group"><label class="form-label">Email</label><input class="form-input" name="email" type="email" value="${esc(c.email)}"></div>
       </div>
       <div class="form-row">
@@ -277,7 +307,7 @@ export function modalCliente(cliente = null) {
       <div class="form-row">
         <div class="form-group"><label class="form-label">Tipo *</label>
           ${edit ? `<div class="chip-fijo">${c.estado === 'efectivo' ? 'Cliente' : 'Potencial'}</div>`
-            : segHTML('estado', [['potencial', 'Potencial'], ['efectivo', 'Cliente']], 'potencial')}</div>
+            : segHTML('estado', [['potencial', 'Potencial'], ['efectivo', 'Cliente']], '')}</div>
         <div class="form-group"><label class="form-label">Origen *</label>
           ${segHTML('origen', [['codek', 'Cliente Codek'], ['externo', 'Externo']], c.origen || '')}
           <div class="hint">Codek = lo hemos captado nosotros · Externo = lo trae el entrenador</div></div>
@@ -286,12 +316,12 @@ export function modalCliente(cliente = null) {
       <div data-bloque="potencial">
         <div class="section-mini">Lo que le interesaría contratar</div>
         <div class="form-row3">
-          <div class="form-group"><label class="form-label">Sesiones / mes</label>
+          <div class="form-group"><label class="form-label">Sesiones / mes *</label>
             <input class="form-input" name="pot_sesiones_bono" type="number" min="1" list="lista-bonos" value="${esc(c.pot_sesiones_bono)}">
             <datalist id="lista-bonos">${OPCIONES_BONO.map(n => `<option value="${n}">`).join('')}</datalist></div>
           <div class="form-group"><label class="form-label">Veces / semana</label>
             <input class="form-input" name="pot_veces_semana" type="number" min="1" max="7" value="${esc(c.pot_veces_semana)}"></div>
-          <div class="form-group"><label class="form-label">Pagaría (€)</label>
+          <div class="form-group"><label class="form-label">Pagaría (€) *</label>
             <input class="form-input" name="pot_precio" type="number" min="0" step="0.01" value="${esc(c.pot_precio)}"></div>
         </div>
       </div>
@@ -332,15 +362,27 @@ export function modalCliente(cliente = null) {
 
   alEnviar(m, form, async () => {
     const v = n => form.elements[n].value.trim();
-    if (!v('nombre')) throw new Error('El nombre es obligatorio');
-    if (!v('apellidos')) throw new Error('Los apellidos son obligatorios');
+    const num = n => (v(n) === '' ? null : Number(v(n)));
     const origen = segVal(m.el, 'origen');
-    if (!origen) throw new Error('Indica si es cliente Codek o externo');
     const estado = estadoActual();
     const entrenador_id = admin ? v('entrenador_id') : S.perfil.id;
-    if (!entrenador_id) throw new Error('Elige el entrenador');
 
-    const num = n => (v(n) === '' ? null : Number(v(n)));
+    // Obligatorios: siempre nombre, teléfono, tipo y origen. Potencial: sesiones e importe.
+    // Cliente nuevo: todo el bono (sesiones, importe, fecha de pago, fecha de inicio y método de pago).
+    const val = nuevoValidador(m.el);
+    val.exige(v('nombre'), 'nombre', 'nombre');
+    val.exige(v('telefono'), 'telefono', 'teléfono');
+    val.exige(estado, 'estado', 'tipo (potencial o cliente)');
+    val.exige(origen, 'origen', 'origen (Codek o externo)');
+    val.exige(entrenador_id, 'entrenador_id', 'entrenador');
+    if (estado === 'potencial') {
+      val.exige(num('pot_sesiones_bono') > 0, 'pot_sesiones_bono', 'sesiones que quiere');
+      val.exige(num('pot_precio') > 0, 'pot_precio', 'importe que pagaría');
+    }
+    const dias = estado === 'efectivo' ? leerBloqueDias(m.el, val) : [];
+    const bono = !edit && estado === 'efectivo' ? leerBono(m.el, val) : null;
+    val.cierra();
+
     const datos = {
       nombre: v('nombre'), apellidos: v('apellidos'), telefono: v('telefono') || null, email: v('email') || null,
       fecha_nacimiento: v('fecha_nacimiento') || null, origen, notas: v('notas') || null,
@@ -349,9 +391,7 @@ export function modalCliente(cliente = null) {
     if (estado === 'potencial') {
       Object.assign(datos, { pot_sesiones_bono: num('pot_sesiones_bono'), pot_veces_semana: num('pot_veces_semana'), pot_precio: num('pot_precio') });
     }
-    const dias = estado === 'efectivo' ? leerBloqueDias(m.el) : [];
     if (estado === 'efectivo') datos.dias_fijos = dias;
-    const bono = !edit && estado === 'efectivo' ? leerBono(m.el) : null;
     const generar = !edit && estado === 'efectivo' && dias.length > 0 && q('[name=generar]').checked;
 
     let guardado;
@@ -384,8 +424,10 @@ export function modalConvertir(c) {
   const form = m.el.querySelector('form');
   bindCerrar(m); bindSeg(m.el); bindBono(m.el); bindBloqueDias(m.el);
   alEnviar(m, form, async () => {
-    const bono = leerBono(m.el);
-    const dias = leerBloqueDias(m.el);
+    const val = nuevoValidador(m.el);
+    const bono = leerBono(m.el, val);
+    const dias = leerBloqueDias(m.el, val);
+    val.cierra();
     const generar = dias.length > 0 && m.el.querySelector('[name=generar]').checked;
     await S.api.guardarCliente({ id: c.id, estado: 'efectivo', dias_fijos: dias });
     const creado = await S.api.crearBono({ cliente_id: c.id, ...bono });
@@ -412,13 +454,37 @@ export function modalBono(c) {
   const form = m.el.querySelector('form');
   bindCerrar(m); bindSeg(m.el); bindBono(m.el);
   alEnviar(m, form, async () => {
-    const bono = leerBono(m.el);
+    const val = nuevoValidador(m.el);
+    const bono = leerBono(m.el, val);
+    val.cierra();
     const generar = !!m.el.querySelector('[name=generar]')?.checked;
     const creado = await S.api.crearBono({ cliente_id: c.id, ...bono });
     m.cerrar();
     await bus.recargar();
     toast('Bono añadido');
     if (generar) modalGenerar(clienteDe(c.id), { bono: creado, cantidad: creado.sesiones });
+  });
+}
+
+// ── Editar un bono existente (p. ej. completar el método de pago) ─────────
+export function modalEditarBono(b, c) {
+  const m = abrirModal(`
+    <div class="modal-title">Editar bono</div>
+    <p class="sub">${esc(nombreCompleto(c))}</p>
+    <form novalidate>
+      ${camposBono({ sesiones: b.sesiones, precio: b.precio, fechaPago: b.fecha_pago, fechaInicio: b.fecha_inicio, metodoPago: b.metodo_pago || '' })}
+      ${acciones('Guardar cambios')}
+    </form>`, 'modal-lg');
+  const form = m.el.querySelector('form');
+  bindCerrar(m); bindSeg(m.el); bindBono(m.el);
+  alEnviar(m, form, async () => {
+    const val = nuevoValidador(m.el);
+    const cambios = leerBono(m.el, val);
+    val.cierra();
+    await S.api.actualizarBono(b.id, cambios);
+    m.cerrar();
+    await bus.recargar();
+    toast('Bono actualizado');
   });
 }
 

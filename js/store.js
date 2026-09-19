@@ -11,7 +11,7 @@ export const S = {
   filtroEntr: 'todos',          // 'todos' o id de entrenador (solo admin lo cambia)
   cliSel: null,                 // id del cliente abierto en la ficha
   cal: { modo: 'semana', fecha: hoyISO(), sesiones: [] },
-  cli: { estado: 'todos', origen: 'todos', texto: '', archivados: false },
+  cli: { estado: 'todos', origen: 'todos', texto: '', archivados: false, pendientes: false },
   resumenMes: hoyISO().slice(0, 7),
 };
 

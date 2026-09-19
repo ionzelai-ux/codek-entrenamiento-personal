@@ -55,4 +55,9 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
 - **Pago**: cada bono tiene fecha de pago; si es futura figura como «pago programado» hasta que llega el día.
   También guarda el **método de pago** (efectivo, tarjeta o transferencia), obligatorio al crear un bono.
 - **Solapes**: al crear una sesión o generar las de los días fijos se avisa si ese entrenador ya tiene a alguien a esa hora.
+- **Campos obligatorios** (sin ellos no se guarda, y se avisa de todos los que faltan a la vez): nombre, teléfono, tipo
+  (potencial/cliente) y origen; en un potencial, sesiones e importe; en un cliente nuevo, todo el bono (sesiones, importe,
+  fecha de pago, fecha de inicio y método de pago).
+- **Info pendiente**: apellidos, email, fecha de nacimiento, veces por semana (potenciales) y bono o método de pago
+  (clientes) no bloquean, pero la ficha se marca «Info pendiente» en la lista y en la ficha. Hay un filtro para verlas.
 - **Origen**: *Codek* = captado por la empresa · *Externo* = lo trae el entrenador.

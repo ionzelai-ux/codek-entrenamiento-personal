@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   addDias, diaSemana, lunesDe, primerDiaMes, ultimoDiaMes, edad, normalizaUsuario, nombreUsuario,
   precioHoraSugerido, precioBonoSugerido, estadoEfectivo, creditos, estadoPago,
-  solapan, buscarConflictos, generarFechas, repartirCarriles, agrupar, sumar,
+  solapan, buscarConflictos, generarFechas, repartirCarriles, agrupar, sumar, camposPendientes,
 } from '../js/logica.js';
 
 test('fechas: lunes, día de la semana y meses', () => {
@@ -130,6 +130,23 @@ test('carriles: bloques solapados se reparten, los separados no', () => {
   assert.equal(new Set([por[1].lane, por[2].lane, por[3].lane]).size, 3);
   assert.equal(por[4].lanes, 1);
   assert.equal(por[4].lane, 0);
+});
+
+test('info pendiente: ficha completa no falta nada; cada hueco se nombra', () => {
+  const completo = { apellidos: 'Remón', telefono: '600', email: 'a@b.c', fecha_nacimiento: '1990-01-01', estado: 'efectivo', bonos: [{ metodo_pago: 'efectivo' }] };
+  assert.deepEqual(camposPendientes(completo), []);
+  assert.deepEqual(camposPendientes({ ...completo, apellidos: '  ', email: null }), ['apellidos', 'email']);
+  // cliente sin bono / con un bono sin método de pago
+  assert.deepEqual(camposPendientes({ ...completo, bonos: [] }), ['bono']);
+  assert.deepEqual(camposPendientes({ ...completo, bonos: [{ metodo_pago: 'tarjeta' }, { metodo_pago: null }] }), ['método de pago']);
+  assert.deepEqual(camposPendientes({ ...completo, bonos: undefined }), ['bono']);
+});
+
+test('info pendiente: un potencial necesita sesiones, veces por semana e importe', () => {
+  const pot = { apellidos: 'X', telefono: '6', email: 'e', fecha_nacimiento: '1990-01-01', estado: 'potencial' };
+  assert.deepEqual(camposPendientes(pot), ['sesiones que quiere', 'veces por semana', 'importe estimado']);
+  assert.deepEqual(camposPendientes({ ...pot, pot_sesiones_bono: 8, pot_veces_semana: 2, pot_precio: 336 }), []);
+  assert.deepEqual(camposPendientes({ ...pot, pot_sesiones_bono: 8, pot_veces_semana: 2, pot_precio: 0 }), ['importe estimado']);
 });
 
 test('resumen: cobrado, programado y estimado por entrenador', () => {

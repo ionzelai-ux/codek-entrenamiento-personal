@@ -114,6 +114,29 @@ export function repartirCarriles(items) {
   return res;
 }
 
+// ── Ficha completa o con información pendiente ────────────────────────────
+// Devuelve las etiquetas de lo que aún falta. Los campos OBLIGATORIOS (nombre, teléfono,
+// tipo, origen, y el dinero) los exige el formulario; aquí se cuenta también lo deseable.
+// Los días fijos y las notas son opcionales y no cuentan.
+export function camposPendientes(c) {
+  const lleno = x => x !== null && x !== undefined && String(x).trim() !== '';
+  const falta = [];
+  if (!lleno(c.apellidos)) falta.push('apellidos');
+  if (!lleno(c.telefono)) falta.push('teléfono');
+  if (!lleno(c.email)) falta.push('email');
+  if (!lleno(c.fecha_nacimiento)) falta.push('fecha de nacimiento');
+  if (c.estado === 'potencial') {
+    if (!(c.pot_sesiones_bono > 0)) falta.push('sesiones que quiere');
+    if (!(c.pot_veces_semana > 0)) falta.push('veces por semana');
+    if (!(c.pot_precio > 0)) falta.push('importe estimado');
+  } else {
+    const bonos = c.bonos || [];
+    if (!bonos.length) falta.push('bono');
+    else if (bonos.some(b => !b.metodo_pago)) falta.push('método de pago');
+  }
+  return falta;
+}
+
 // ── Resumen de facturación ────────────────────────────────────────────────
 // mes = 'YYYY-MM'. cobrado = bonos con fecha de pago en el mes ya llegada;
 // programado = con fecha de pago futura dentro del mes; estimado = pipeline de potenciales activos.

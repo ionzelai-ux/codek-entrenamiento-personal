@@ -53,6 +53,10 @@ header { background: var(--dark); border-bottom: 3px solid var(--red); padding: 
 .chip.amarillo { border-color: var(--yellow); color: var(--yellow); }
 .chip.granate { border-color: var(--red-light); color: #e06060; }
 .chip.gris { color: #aaa; }
+.chip.pendiente { border-color: var(--yellow); color: #111; background: var(--yellow); font-weight: 700; }
+.alert-pendiente { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; background: rgba(200,160,48,.12); border-color: var(--yellow); color: var(--yellow); }
+.form-input.invalido, .seg.invalido { border-color: #e05555 !important; background: rgba(224,85,85,.12); }
+.seg.invalido { box-shadow: 0 0 0 1px #e05555; }
 .chip-fijo { font-family: var(--mono); font-size: 12px; padding: 9px 11px; border: 1px solid var(--border); color: var(--muted); }
 .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
 .sub { font-size: 13px; color: var(--muted); margin: -12px 0 16px; }

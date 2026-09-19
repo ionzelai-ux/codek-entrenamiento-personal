@@ -51,6 +51,9 @@ export async function eliminarCliente(id) { comprobar(await sb.from('clientes').
 
 // ── Bonos ─────────────────────────────────────────────────────────────────
 export async function crearBono(b) { return comprobar(await sb.from('bonos').insert(b).select().single()); }
+export async function actualizarBono(id, cambios) {
+  return comprobar(await sb.from('bonos').update(cambios).eq('id', id).select().single());
+}
 export async function eliminarBono(id) { comprobar(await sb.from('bonos').delete().eq('id', id)); }
 
 // ── Sesiones ──────────────────────────────────────────────────────────────

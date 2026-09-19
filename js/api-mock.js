@@ -91,6 +91,12 @@ export async function eliminarCliente(id) {
   clientes.splice(clientes.findIndex(c => c.id === id), 1);
 }
 export async function crearBono(b) { const n = { id: nuevoId(), ...b }; bonos.push(n); return clonar(n); }
+export async function actualizarBono(id, cambios) {
+  const b = bonos.find(x => x.id === id);
+  if (!b || !idsVisibles().has(b.cliente_id)) throw new Error('Bono no encontrado');
+  Object.assign(b, cambios);
+  return clonar(b);
+}
 export async function eliminarBono(id) { bonos.splice(bonos.findIndex(b => b.id === id), 1); }
 
 export async function sesionesEntre(desde, hasta, entrenadorId = null) {

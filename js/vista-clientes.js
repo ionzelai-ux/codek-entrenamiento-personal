@@ -1,8 +1,8 @@
 // Clientes: lista con filtros + ficha (datos, bonos, días fijos, créditos y sesiones).
 import { S, bus, esAdmin, entrenadorDe, nombreCompleto, clienteDe, entrenadorFiltroId } from './store.js';
 import { esc, dialogo, toast, fmtEUR, fmtFecha, fmtFechaDia, textoDias, etiquetaMetodo } from './util.js';
-import { hoyISO, creditos, estadoEfectivo, estadoPago, edad } from './logica.js';
-import { modalCliente, modalConvertir, modalBono, modalGenerar, modalSesion, cambiarEstadoSesion } from './modales.js';
+import { hoyISO, creditos, estadoEfectivo, estadoPago, edad, camposPendientes } from './logica.js';
+import { modalCliente, modalConvertir, modalBono, modalEditarBono, modalGenerar, modalSesion, cambiarEstadoSesion } from './modales.js';
 
 const ETIQUETA = { reservada: 'RESERV.', hecha: 'HECHA', no_vino: 'NO VINO', auto: 'AUTO' };
 
@@ -14,6 +14,7 @@ function filtrados() {
       && (!f || c.entrenador_id === f)
       && (S.cli.estado === 'todos' || c.estado === S.cli.estado)
       && (S.cli.origen === 'todos' || c.origen === S.cli.origen)
+      && (!S.cli.pendientes || camposPendientes(c).length > 0)
       && (!t || `${nombreCompleto(c)} ${c.telefono || ''} ${c.email || ''}`.toLowerCase().includes(t)))
     .sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es'));
 }
@@ -38,7 +39,7 @@ function itemHTML(c) {
   }
   return `<div class="client-item ${S.cliSel === c.id ? 'active' : ''} ${c.activo ? '' : 'archivado'}" data-acc="cli-sel" data-id="${c.id}">
     <div class="client-name">${esc(nombreCompleto(c))}</div>
-    <div class="chips">${chipsTipo(c)}${esAdmin() && !entrenadorFiltroId() ? `<span class="chip" style="border-color:${entrenadorDe(c.entrenador_id)?.color};color:${entrenadorDe(c.entrenador_id)?.color}">${esc(entrenadorDe(c.entrenador_id)?.nombre || '')}</span>` : ''}${c.activo ? '' : '<span class="chip gris">ARCHIVADO</span>'}</div>
+    <div class="chips">${chipsTipo(c)}${esAdmin() && !entrenadorFiltroId() ? `<span class="chip" style="border-color:${entrenadorDe(c.entrenador_id)?.color};color:${entrenadorDe(c.entrenador_id)?.color}">${esc(entrenadorDe(c.entrenador_id)?.nombre || '')}</span>` : ''}${c.activo ? '' : '<span class="chip gris">ARCHIVADO</span>'}${c.activo && camposPendientes(c).length ? '<span class="chip pendiente" title="Faltan datos por completar">INFO PENDIENTE</span>' : ''}</div>
     ${extra}</div>`;
 }
 function listaHTML() {
@@ -59,6 +60,11 @@ function fichaHTML(c) {
   const ed = edad(c.fecha_nacimiento);
 
   let alertas = '';
+  const pendiente = camposPendientes(c);
+  if (pendiente.length) {
+    alertas += `<div class="alert alert-pendiente"><span>📝 <b>INFO PENDIENTE</b> — falta: ${esc(pendiente.join(', '))}.</span>
+      <button class="btn btn-sm btn-secondary" data-acc="cli-editar" data-id="${c.id}">Completar</button></div>`;
+  }
   if (!c.activo) alertas += '<div class="alert alert-warn">ARCHIVADO — no aparece en las listas normales.</div>';
   if (efe) {
     if (!cr.total) alertas += '<div class="alert alert-warn">Sin bono: añade uno para poder registrar sesiones.</div>';
@@ -89,6 +95,7 @@ function fichaHTML(c) {
           <span class="chip ${estadoPago(b, hoy) === 'cobrado' ? 'verde' : 'amarillo'}">${estadoPago(b, hoy) === 'cobrado' ? 'COBRADO' : 'PAGO PROGRAMADO'}</span>
           ${b.metodo_pago ? `<span class="chip">${etiquetaMetodo(b.metodo_pago)}</span>` : ''}</span>
         <span><span style="color:var(--green-light)">${fmtEUR(b.precio)}</span>
+          <button class="sess-del" data-acc="bono-editar" data-id="${b.id}" title="Editar bono">✎</button>
           <button class="sess-del" data-acc="bono-borrar" data-id="${b.id}" title="Eliminar bono">✕</button></span>
       </div>`).join('') || '<span style="opacity:.4">Sin bonos</span>';
 
@@ -171,6 +178,7 @@ export function renderClientes(el) {
         <input class="form-input" data-filtro-texto placeholder="Buscar nombre, teléfono, email…" value="${esc(texto)}">
         ${seg('estado', [['todos', 'Todos'], ['potencial', 'Potenciales'], ['efectivo', 'Clientes']])}
         ${seg('origen', [['todos', 'Todos'], ['codek', 'Codek'], ['externo', 'Externos']])}
+        <label class="check check-sm"><input type="checkbox" data-acc="cli-pendientes" ${S.cli.pendientes ? 'checked' : ''}> Solo con info pendiente</label>
         <label class="check check-sm"><input type="checkbox" data-acc="cli-archivados" ${S.cli.archivados ? 'checked' : ''}> Ver archivados</label>
         <div class="lista-items">${listaHTML()}</div>
       </aside>
@@ -190,6 +198,12 @@ export const accionesClientes = {
   'cli-volver': () => { S.cliSel = null; bus.repintar(); },
   'filtro': t => { S.cli[t.dataset.k] = t.dataset.v; bus.repintar(); },
   'cli-archivados': t => { S.cli.archivados = t.checked; bus.repintar(); },
+  'cli-pendientes': t => { S.cli.pendientes = t.checked; bus.repintar(); },
+  'bono-editar': t => {
+    const c = clienteDe(S.cliSel);
+    const b = c?.bonos.find(x => x.id === t.dataset.id);
+    if (b) modalEditarBono(b, c);
+  },
   'cli-nuevo': () => modalCliente(),
   'cli-editar': t => modalCliente(clienteDe(t.dataset.id)),
   'cli-convertir': t => modalConvertir(clienteDe(t.dataset.id)),
