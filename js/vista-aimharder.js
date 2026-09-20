@@ -23,7 +23,7 @@ function diaHTML() {
   }
   const filas = d.clases.map(c => `
     <tr class="${c.es_rack ? 'fila-rack' : ''}">
-      <td class="num">${esc(c.hora)}</td><td>${esc(c.nombre)}${c.es_rack ? ' <span class="chip amarillo">RACK</span>' : ''}</td>
+      <td class="num">${esc(c.hora)}</td><td>${esc(c.nombre)}${c.es_rack ? ' <span class="chip amarillo">RACK</span>' : ''}${c.es_personal ? ' <span class="chip">PERSONAL</span>' : ''}${c.cancelada ? ' <span class="chip granate">CANCELADA</span>' : ''}</td>
       <td class="num">${esc(c.duracion)}</td><td class="num">${esc(c.aforo)}</td><td>${esc(c.sala || '')}</td><td class="num">${esc(c.schedule_id)}</td>
     </tr>`).join('');
   return `

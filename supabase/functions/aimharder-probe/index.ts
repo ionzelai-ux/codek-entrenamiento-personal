@@ -81,13 +81,18 @@ export async function llamarAimHarder(deps: Deps, metodo: string, ruta: string, 
   return r;
 }
 
+// AimHarder devuelve { data: [ {schedule_id, time, name, duration, limit, ...} ], pagination, info }.
+// Se aceptan también las variantes que describe su documentación.
 export function extraerClases(json: any) {
-  const lista = json?.appointments ?? json?.data?.appointments ?? (Array.isArray(json) ? json : null);
+  const lista = json?.appointments ?? json?.data?.appointments
+    ?? (Array.isArray(json?.data) ? json.data : null) ?? (Array.isArray(json) ? json : null);
   if (!Array.isArray(lista)) return null;
   return lista.map((c: any) => ({
-    schedule_id: c.schedule_id, hora: c.time, nombre: c.name, duracion: c.duration,
-    aforo: c.limit, sala: c.room_name, aforo_sala: c.room_capacity, class_id: c.class_id,
-    cancelada: c.cancelled, es_rack: /rack/i.test(String(c.name ?? '')),
+    schedule_id: c.schedule_id, hora: c.time, nombre: c.name, descripcion: c.description ?? '',
+    duracion: typeof c.duration === 'number' ? `${c.duration} min` : (c.duration ?? ''),
+    aforo: c.limit, sala: c.room_name ?? '', class_id: c.class_id,
+    cancelada: !!c.cancelled, publica: c.is_public ?? null,
+    es_rack: /rack/i.test(String(c.name ?? '')), es_personal: /personal/i.test(String(c.name ?? '')),
   }));
 }
 

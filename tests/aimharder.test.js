@@ -144,6 +144,32 @@ test('ningún camino de error devuelve los tokens guardados', async () => {
   assert.ok(!texto.includes('eyJ'));
 });
 
+// Forma REAL de la respuesta de AimHarder (capturada en producción): { data: [...], pagination, info }
+const REAL = { data: [
+  { schedule_id: 1386476, time: '07:00', name: 'Entreno personal', description: 'Entrenamiento personal', duration: 60, limit: 3, waitlist_count: null, cancelled: false, show_cancelled_class: false, class_id: 44627, room_id: null, room_name: null, room_capacity: null, staff_id: null, staff_name: null, is_event: false, is_public: false },
+  { schedule_id: 1392828, time: '08:00', name: 'Entrenamiento Funcional + Calistenia', description: 'Entrenamiento Grupal por bloques', duration: 60, limit: 12, cancelled: false, class_id: 37385, room_name: null, is_public: true },
+  { schedule_id: 1402616, time: '08:00', name: 'Rack libre', description: 'Entrenamiento libre en nuestro Rack multifuncional', duration: 60, limit: 4, cancelled: false, class_id: 38710, room_name: null, is_public: true },
+], pagination: { nextCursor: null }, info: { version: '1.0' } };
+
+test('respuesta real de AimHarder: la lista está directamente en "data"', () => {
+  const c = extraerClases(REAL);
+  assert.equal(c.length, 3);
+  const rack = c.find(x => x.es_rack);
+  assert.deepEqual([rack.schedule_id, rack.hora, rack.aforo, rack.duracion], [1402616, '08:00', 4, '60 min']);
+  assert.equal(c.filter(x => x.es_rack).length, 1);
+  assert.equal(c.find(x => x.es_personal).nombre, 'Entreno personal');
+  assert.equal(c[1].es_rack, false);
+  assert.equal(c[0].sala, '');          // room_name null → cadena vacía
+  assert.equal(c[0].publica, false);
+});
+
+test('manejar: calendario con la respuesta real devuelve las clases y el resumen', async () => {
+  const e = entorno({ respuestas: [json(REAL)] });
+  const d = await (await manejar(post({ accion: 'calendario', fecha: '2026-09-21' }), e.deps)).json();
+  assert.equal(d.ok, true);
+  assert.deepEqual(d.resumen, { total: 3, rack: 1 });
+});
+
 test('extraerClases y ocultarTokens', () => {
   assert.equal(extraerClases({ foo: 1 }), null);
   assert.equal(extraerClases({ data: { appointments: [{ name: 'RACK LIBRE' }] } })[0].es_rack, true);
