@@ -59,7 +59,7 @@ function ocupacionHTML() {
   const o = S.ah.ocup;
   const a = S.ah;
   let res = '';
-  if (a.calculando) res = '<div class="alert alert-info" style="margin-top:14px">⏳ Calculando… lee las reservas de todos los socios, puede tardar 1-2 minutos. No cierres la pantalla.</div>';
+  if (a.calculando) res = `<div class="alert alert-info" style="margin-top:14px">⏳ Calculando… ${a.progreso ? `<b>${esc(a.progreso)}</b> · ` : ''}lee las reservas de todos los socios respetando el límite de AimHarder; puede tardar unos minutos. No cierres la pantalla.</div>`;
   else if (o && !o.ok) res = `<div class="alert alert-danger" style="margin-top:14px">✖ ${esc(o.error || 'Error')}${o.forma ? `<br><small>Campos recibidos: ${esc(o.forma.join(', '))}</small>` : ''}</div>`;
   else if (o) {
     const celda = (n, t, cl = '') => `<div class="kpi"><div class="kpi-n ${cl}">${esc(n)}</div><div class="kpi-l">${t}</div></div>`;
@@ -71,6 +71,8 @@ function ocupacionHTML() {
       </div>
       <div class="alert ${o.completo ? 'alert-ok' : 'alert-warn'}">${o.completo ? '✔ Cálculo completo' : '⚠ Cálculo INCOMPLETO: no te fíes de este número'} ·
         socios revisados ${esc(o.socios_revisados)}/${esc(o.socios_total)} · ${esc(o.solicitudes)} peticiones · ${esc(o.segundos)} s${o.reintentos_429 ? ` · ${esc(o.reintentos_429)} reintentos por límite de uso` : ''}</div>
+      ${o.invitados_error ? `<div class="hint">No se pudo contar a los invitados de otros (${esc(o.invitados_error)}): el total puede quedarse corto.</div>` : ''}
+      ${o.limite ? `<div class="hint">Límite de uso indicado por AimHarder: ${esc(JSON.stringify(o.limite))}</div>` : ''}
       ${o.en_espera ? `<div class="hint">Además hay ${esc(o.en_espera)} reserva(s) en lista de espera (no cuentan).</div>` : ''}
       ${(o.incidencias || []).length ? `<div class="hint">Incidencias: ${esc(o.incidencias.join(' · '))}</div>` : ''}
       <div class="hint" style="margin-top:6px">Compara con AimHarder (Reservas → esa clase → «Plazas ocupadas»). Referencia usada: reserva nº ${esc(o.ancla)} · historial desde el nº ${esc(o.desde)}${o.campos_historial ? ` · campos del historial: ${esc(o.campos_historial.join(', '))}` : ''}.</div>`;
@@ -186,11 +188,24 @@ export const accionesAimHarder = {
     const fecha = document.getElementById('ah-ofecha')?.value, hora = document.getElementById('ah-ohora')?.value;
     S.ah.ofecha = fecha || S.ah.ofecha; S.ah.ohora = hora || S.ah.ohora;
     if (!fecha || !hora) { S.ah.ocup = { ok: false, error: 'Indica el día y la hora.' }; bus.repintar(); return; }
-    S.ah.ocup = null; S.ah.calculando = true;
+    S.ah.ocup = null; S.ah.calculando = true; S.ah.progreso = '';
     bus.repintar();
-    try { S.ah.ocup = await S.api.consultarAimHarder({ accion: 'ocupacion', fecha, hora }); }
-    catch (err) { S.ah.ocup = { ok: false, error: err.message }; }
-    finally { S.ah.calculando = false; }
+    try {
+      // Cada tanda dura como mucho ~2 minutos (límite de la función); si faltan socios se continúa sola, hasta 6 tandas.
+      let r = await S.api.consultarAimHarder({ accion: 'ocupacion', fecha, hora });
+      let segundos = r.segundos || 0;
+      for (let ronda = 1; r.ok && !r.completo && r.pendientes?.length && ronda < 6; ronda++) {
+        S.ah.progreso = `${r.socios_revisados}/${r.socios_total} socios`;
+        bus.repintar();
+        const previo = { pendientes: r.pendientes, reservas_socios: r.reservas_socios, en_espera: r.en_espera,
+          socios_revisados: r.socios_revisados, socios_total: r.socios_total, solicitudes: r.solicitudes, reintentos_429: r.reintentos_429 };
+        r = await S.api.consultarAimHarder({ accion: 'ocupacion', fecha, hora, previo });
+        segundos += r.segundos || 0;
+      }
+      if (r.ok) r.segundos = Math.round(segundos * 10) / 10;
+      S.ah.ocup = r;
+    } catch (err) { S.ah.ocup = { ok: false, error: err.message }; }
+    finally { S.ah.calculando = false; S.ah.progreso = ''; }
     bus.repintar();
   },
   'ah-diagnostico': async () => {

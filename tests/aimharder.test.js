@@ -16,11 +16,12 @@ function entorno({ tokens = { access: JWT('A1'), refresh: JWT('R1') }, respuesta
   const cola = [...respuestas];
   const pruebas = pruebasIniciales.map(p => ({ schedule_id: 1, fecha: '2026-09-21', hora: '11:00', cancelada: null, ...p }));
   let relojMs = 0;
+  const pausas = [];
   const deps = {
     esAdmin: async () => admin,
     hoy: () => '2026-09-21',
     ahoraMadrid: () => ahora,
-    pausa: async () => {},
+    pausa: async ms => { pausas.push(ms); },
     reloj: () => { relojMs += msPorLlamadaReloj; return relojMs; },
     pruebas: {
       registrar: async p => { if (falloRegistrar) throw new Error('sin tabla'); pruebas.push({ ...p, cancelada: null }); },
@@ -40,7 +41,7 @@ function entorno({ tokens = { access: JWT('A1'), refresh: JWT('R1') }, respuesta
       caducidad: async () => (guardado ? guardado.exp : null),
     },
   };
-  return { deps, llamadas, guardado: () => guardado, pruebas };
+  return { deps, llamadas, guardado: () => guardado, pruebas, pausas };
 }
 const post = (cuerpo, cabeceras = {}) => new Request('https://x/fn', { method: 'POST', body: JSON.stringify(cuerpo), headers: { Authorization: 'Bearer usuario', ...cabeceras } });
 const CLASES = { appointments: [
@@ -467,15 +468,91 @@ test('ocupación: reintenta los 429 (demasiadas peticiones) y avisa de los socio
   assert.match(r.incidencias[0], /socio 4/);
 });
 
-test('ocupación: si se agota el tiempo devuelve lo que tiene marcado como incompleto', async () => {
-  const e = entorno({
-    msPorLlamadaReloj: 30000,
+test('ocupación: si se agota el tiempo devuelve lo que falta y se puede continuar sin repetir trabajo', async () => {
+  const socios = { 1: [[reserva(1)]], 2: [[reserva(5)]], 4: [[reserva(9, { day: '2026-09-22' })]] };
+  const primera = entorno({
+    msPorLlamadaReloj: 40000,                       // el reloj avanza deprisa: la tanda se agota enseguida
     pruebasIniciales: [{ booking_id: 143000000 }],
-    enrutador: apiSocios({ listaClientes: clientes, socios: { 1: [[reserva(1)]], 2: [[reserva(2)]], 4: [[reserva(3)]] } }),
+    enrutador: apiSocios({ listaClientes: clientes, socios }),
+  });
+  const a = await calcularOcupacion(primera.deps, '2026-09-21', '11:00');
+  assert.equal(a.ok, true);
+  assert.equal(a.completo, false);
+  assert.ok(a.pendientes.length > 0);
+  assert.equal(a.socios_revisados + a.pendientes.length, a.socios_total, 'cada socio o está revisado o está pendiente');
+  assert.equal(a.invitados_otros, null, 'los invitados solo se cuentan al terminar');
+  assert.equal(a.total, a.socios + a.invitados_propios, 'el total parcial no incluye lo que no se ha mirado');
+
+  // Se continúa con el estado devuelto (reloj normal): no vuelve a pedir la lista de socios ni a los ya revisados
+  const segunda = entorno({
+    pruebasIniciales: [{ booking_id: 143000000 }],
+    enrutador: apiSocios({ listaClientes: clientes, socios }),
+  });
+  const previo = { pendientes: a.pendientes, reservas_socios: a.reservas_socios, en_espera: a.en_espera, socios_revisados: a.socios_revisados, socios_total: a.socios_total, solicitudes: a.solicitudes, reintentos_429: a.reintentos_429 };
+  const b = await calcularOcupacion(segunda.deps, '2026-09-21', '11:00', previo);
+  assert.equal(b.completo, true);
+  assert.deepEqual(b.pendientes, []);
+  assert.equal(b.socios_revisados, b.socios_total);
+  assert.equal(b.socios, 2, 'socios 1 y 2; el 4 tiene su reserva otro día');
+  assert.ok(!segunda.llamadas.some(l => l.url.endsWith('/clients')), 'no vuelve a leer la lista de socios');
+  assert.equal(segunda.llamadas.filter(l => l.url.includes('booking-history')).length, a.pendientes.length, 'solo revisa los pendientes');
+});
+
+test('ocupación: honra Retry-After, separa las peticiones y avisa de las cabeceras de límite', async () => {
+  const e = entorno({ pruebasIniciales: [{ booking_id: 143000000 }], enrutador: null });
+  let primera = true;
+  e.deps.fetchFn = async (url) => {
+    const ruta = String(url).replace('https://api.aimharder.com/', '');
+    e.llamadas.push({ url: String(url) });
+    if (ruta.startsWith('calendar/')) return json(CAL_RACK);
+    if (ruta === 'clients') return pagina([{ id: 1 }]);
+    if (ruta.includes('booking-history') && primera) {
+      primera = false;
+      return new Response(JSON.stringify({ error: { message: 'Too many requests' } }), { status: 429, headers: { 'Retry-After': '7', 'X-RateLimit-Limit': '100', 'X-Otra': 'no' } });
+    }
+    if (ruta.includes('booking-history')) return pagina([reserva(1)]);
+    return pagina([]);
+  };
+  const r = await calcularOcupacion(e.deps, '2026-09-21', '11:00');
+  assert.equal(r.socios, 1);
+  assert.equal(r.reintentos_429, 1);
+  assert.ok(e.pausas.some(ms => ms >= 7000 && ms <= 7500), `esperó lo que pidió AimHarder: ${e.pausas}`);
+  assert.deepEqual(r.limite, { 'retry-after': '7', 'x-ratelimit-limit': '100' }, 'solo devuelve las cabeceras de límite de uso');
+});
+
+test('ocupación: una lista cortada por el tope de páginas no se da por completa', async () => {
+  const e = entorno({ pruebasIniciales: [{ booking_id: 143000000 }] });
+  e.deps.fetchFn = async (url) => {
+    const ruta = String(url).replace('https://api.aimharder.com/', '');
+    e.llamadas.push({ url: String(url) });
+    if (ruta.startsWith('calendar/')) return json(CAL_RACK);
+    if (ruta.startsWith('clients?cursor') || ruta === 'clients') return json({ data: [{ id: 1 }], pagination: { nextCursor: 'siempre' } });   // no termina nunca
+    return pagina([]);
+  };
+  const r = await calcularOcupacion(e.deps, '2026-09-21', '11:00');
+  assert.equal(r.ok, false);
+  assert.match(r.error, /lista completa de socios/);
+});
+
+test('ocupación: si falla la lista de invitados lo dice y no inventa el número', async () => {
+  const e = entorno({
+    pruebasIniciales: [{ booking_id: 143000000 }],
+    enrutador: (ruta) => {
+      if (ruta.startsWith('guests')) return json({ error: { message: 'boom' } }, 500);
+      return apiSocios({ listaClientes: clientes.slice(0, 1), socios: { 1: [[reserva(1)]] } })(ruta);
+    },
   });
   const r = await calcularOcupacion(e.deps, '2026-09-21', '11:00');
-  assert.equal(r.ok, true);
-  assert.equal(r.completo, false);
+  assert.equal(r.completo, true);
+  assert.equal(r.invitados_otros, null);
+  assert.match(r.invitados_error, /HTTP 500/);
+});
+
+test('ocupación: el estado para continuar se valida', async () => {
+  const e = entorno({ pruebasIniciales: [{ booking_id: 1 }], enrutador: apiSocios({ listaClientes: clientes, socios: {} }) });
+  const r = await calcularOcupacion(e.deps, '2026-09-21', '11:00', { pendientes: ['x; drop'], reservas_socios: [] });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /no es válido/);
 });
 
 test('ocupación: sin reserva de referencia, sin Rack libre a esa hora o con lista de socios inesperada', async () => {

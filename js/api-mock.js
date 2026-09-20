@@ -78,11 +78,18 @@ export async function consultarAimHarder(cuerpo) {
   }
   if (cuerpo.accion === 'ocupacion') {
     const propios = pruebasDemo.filter(p => !p.cancelada && p.fecha === cuerpo.fecha && p.hora === cuerpo.hora).length;
-    const socios = 1, total = socios + propios;
+    const socios = 1;
+    if (!cuerpo.previo) {   // primera tanda: se queda a medias para enseñar la continuación
+      return {
+        ok: true, fecha: cuerpo.fecha, hora: cuerpo.hora, aforo: 4, socios, invitados_propios: propios, invitados_otros: null, en_espera: 0,
+        total: socios + propios, libres: 4 - socios - propios, completo: false, socios_total: 146, socios_revisados: 97, pendientes: [1, 2, 3], solicitudes: 120,
+        reintentos_429: 3, limite: { 'retry-after': '5' }, segundos: 95.3, ancla: 143035273, desde: 125035273, campos_historial: ['id', 'day', 'time'], incidencias: [], reservas_socios: [1],
+      };
+    }
     return {
       ok: true, fecha: cuerpo.fecha, hora: cuerpo.hora, aforo: 4, socios, invitados_propios: propios, invitados_otros: 0, en_espera: 0,
-      total, libres: 4 - total, completo: true, socios_total: 180, socios_revisados: 180, solicitudes: 182, reintentos_429: 0, segundos: 41.2,
-      ancla: 143035273, desde: 125035273, campos_historial: ['id', 'day', 'time', 'class', 'state', 'cancellation_date'], incidencias: [], reservas_socios: [1],
+      total: socios + propios, libres: 4 - socios - propios, completo: true, socios_total: 146, socios_revisados: 146, pendientes: [], solicitudes: 150,
+      reintentos_429: 3, limite: { 'retry-after': '5' }, segundos: 30.1, ancla: 143035273, desde: 125035273, campos_historial: ['id', 'day', 'time'], incidencias: [], reservas_socios: [1],
     };
   }
   if (cuerpo.accion === 'prueba_diagnostico') {

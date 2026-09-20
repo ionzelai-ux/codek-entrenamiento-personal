@@ -26,8 +26,10 @@ const MAX_PRUEBAS_ACTIVAS = 6;
 // se usa una cifra mayor y 45 días de margen para no dejarse reservas fuera al acotar el historial).
 const RVID_POR_DIA = 400000;
 const DIAS_ATRAS = 45;
-const PARALELO = 5;                // peticiones simultáneas máximas
-const PRESUPUESTO_MS = 100000;     // tiempo máximo del cálculo (la función se corta a los ~150 s)
+const PARALELO = 2;                // peticiones simultáneas máximas
+const INTERVALO_MS = 500;          // separación mínima entre peticiones (AimHarder limita el ritmo: ≈ 2 por segundo)
+const MAX_REINTENTOS = 6;          // ante «demasiadas peticiones» (429)
+const PRESUPUESTO_MS = 110000;     // tiempo máximo de cada tanda (la función se corta a los ~150 s)
 const MAX_PAGINAS = 40;
 
 export interface Tokens { access: string; refresh: string }
@@ -53,7 +55,7 @@ export interface Deps {
   pausa(ms: number): Promise<void>;
   reloj(): number;                 // milisegundos (para medir el tiempo del cálculo)
 }
-interface Respuesta { estado: number; json: any }
+interface Respuesta { estado: number; json: any; cab?: Record<string, string> }
 
 export class ErrorAimHarder extends Error {
   estado: number;
@@ -71,7 +73,9 @@ async function pedir(fetchFn: typeof fetch, metodo: string, ruta: string, token:
   const texto = await r.text();
   let json: any;
   try { json = JSON.parse(texto); } catch { json = { _texto: texto.slice(0, 300) }; }
-  return { estado: r.status, json };
+  const cab: Record<string, string> = {};                 // solo las cabeceras de límite de uso (sirven para ajustar el ritmo)
+  r.headers.forEach((v: string, k: string) => { if (/^(retry-after|x-ratelimit|ratelimit)/i.test(k)) cab[k.toLowerCase()] = v; });
+  return { estado: r.status, json, cab };
 }
 
 const caducado = (r: Respuesta): boolean =>
@@ -266,15 +270,25 @@ function extraerLista(json: any, claves: string[]): any[] | null {
 }
 const siguienteCursor = (json: any): string | null => json?.pagination?.nextCursor ?? json?.data?.pagination?.nextCursor ?? null;
 
-interface Contadores { solicitudes: number; reintentos: number }
+interface Contadores { solicitudes: number; reintentos: number; libreDesde: number; ultimoLimite: Record<string, string> | null }
 
+// Ritmo compartido por todas las peticiones: cada una reserva su hueco (una cada INTERVALO_MS) y,
+// si AimHarder responde 429 («demasiadas peticiones»), TODAS esperan lo que pida (Retry-After) o,
+// si no lo dice, un tiempo creciente. Así no se malgasta el cupo golpeando el límite.
 async function pedirConReintento(deps: Deps, c: Contadores, ruta: string): Promise<Respuesta> {
   for (let intento = 0; ; intento++) {
+    const ahora = deps.reloj();
+    const espera = Math.max(0, c.libreDesde - ahora);
+    c.libreDesde = Math.max(c.libreDesde, ahora) + INTERVALO_MS;
+    if (espera > 0) await deps.pausa(espera);
     c.solicitudes++;
     const r = await llamarAimHarder(deps, 'GET', ruta);
-    if (r.estado !== 429 || intento >= 3) return r;         // 429 = demasiadas peticiones: esperar y reintentar
+    if (r.estado !== 429 || intento >= MAX_REINTENTOS) return r;
     c.reintentos++;
-    await deps.pausa(1000 * (intento + 1));
+    c.ultimoLimite = r.cab ?? null;
+    const ra = Number(r.cab?.['retry-after']);
+    const pide = Number.isFinite(ra) && ra > 0 ? ra * 1000 : 1000 * 2 ** intento;
+    c.libreDesde = Math.max(c.libreDesde, deps.reloj() + Math.min(15000, pide));
   }
 }
 
@@ -285,14 +299,15 @@ async function paginar(deps: Deps, c: Contadores, rutaBase: string, claves: stri
   do {
     const ruta: string = cursor ? `${rutaBase}${rutaBase.includes('?') ? '&' : '?'}cursor=${encodeURIComponent(cursor)}` : rutaBase;
     const r = await pedirConReintento(deps, c, ruta);
-    if (r.estado !== 200) return { items, error: `HTTP ${r.estado}: ${mensajeApi(r)}`, forma: null as string[] | null };
+    if (r.estado !== 200) return { items, error: `HTTP ${r.estado}: ${mensajeApi(r)}`, forma: null as string[] | null, truncado: false };
     const lista = extraerLista(r.json, claves);
-    if (!lista) return { items, error: 'formato inesperado', forma: Object.keys(r.json ?? {}) };
+    if (!lista) return { items, error: 'formato inesperado', forma: Object.keys(r.json ?? {}), truncado: false };
     items.push(...lista);
     cursor = siguienteCursor(r.json);
     paginas++;
   } while (cursor && paginas < MAX_PAGINAS && !vencido());
-  return { items, error: null as string | null, forma: null as string[] | null };
+  // truncado = quedaron páginas sin leer (por el tope de páginas o por el tiempo): el resultado NO es completo
+  return { items, error: null as string | null, forma: null as string[] | null, truncado: cursor !== null };
 }
 
 async function enParalelo<T>(items: T[], n: number, f: (x: T) => Promise<void>, vencido: () => boolean): Promise<void> {
@@ -301,11 +316,20 @@ async function enParalelo<T>(items: T[], n: number, f: (x: T) => Promise<void>, 
   await Promise.all(Array.from({ length: Math.min(n, items.length) }, trabajador));
 }
 
-export async function calcularOcupacion(deps: Deps, fecha: string, hora: string) {
+// Estado parcial de un cálculo que no cabe en una sola tanda (la función tiene un tiempo máximo):
+// se devuelve tal cual y quien llama lo reenvía en `previo` para continuar donde se quedó.
+export interface EstadoOcupacion {
+  pendientes: number[]; reservas_socios: number[]; en_espera: number; socios_revisados: number;
+  socios_total: number; solicitudes: number; reintentos_429: number;
+}
+
+export async function calcularOcupacion(deps: Deps, fecha: string, hora: string, previo?: EstadoOcupacion | null) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !/^\d{2}:\d{2}$/.test(hora)) return { ok: false, error: 'Indica la fecha (AAAA-MM-DD) y la hora (HH:MM).' };
   const inicio = deps.reloj();
   const vencido = () => deps.reloj() - inicio > PRESUPUESTO_MS;
-  const c: Contadores = { solicitudes: 0, reintentos: 0 };
+  const c: Contadores = { solicitudes: previo?.solicitudes ?? 0, reintentos: previo?.reintentos_429 ?? 0, libreDesde: 0, ultimoLimite: null };
+  const esNumeros = (x: unknown): x is number[] => Array.isArray(x) && x.length <= 5000 && x.every(n => Number.isFinite(n));
+  if (previo && !(esNumeros(previo.pendientes) && esNumeros(previo.reservas_socios))) return { ok: false, error: 'El estado para continuar el cálculo no es válido.' };
 
   // 1) La clase «Rack libre» de esa hora (además deja el token renovado antes de lanzar peticiones simultáneas)
   const cal = await pedirConReintento(deps, c, `calendar/${fecha}`);
@@ -321,21 +345,30 @@ export async function calcularOcupacion(deps: Deps, fecha: string, hora: string)
   if (!ancla) return { ok: false, error: 'Necesito una reserva de referencia para acotar la búsqueda: haz antes una reserva de prueba (puedes cancelarla después).' };
   const desde = Math.max(0, ancla - DIAS_ATRAS * RVID_POR_DIA);
 
-  // 3) Socios
-  const cl = await paginar(deps, c, 'clients', ['clients'], vencido);
-  if (cl.error) return { ok: false, error: `No se pudo leer la lista de socios (${cl.error}).`, forma: cl.forma };
-  const idDe = (x: any) => x?.id ?? x?.Id ?? x?.client_id;
-  const ids: number[] = cl.items.filter((x: any) => !x?.deactivation_date && idDe(x) != null).map((x: any) => Number(idDe(x)));
+  // 3) Socios (si se continúa un cálculo, ya se sabe cuáles faltan por revisar)
+  let ids: number[];
+  let sociosTotal: number;
+  if (previo) {
+    ids = previo.pendientes;
+    sociosTotal = previo.socios_total;
+  } else {
+    const cl = await paginar(deps, c, 'clients', ['clients'], () => false);     // la lista de socios se lee siempre entera
+    if (cl.error || cl.truncado) return { ok: false, error: `No se pudo leer la lista completa de socios (${cl.error ?? 'demasiadas páginas'}).`, forma: cl.forma };
+    const idDe = (x: any) => x?.id ?? x?.Id ?? x?.client_id;
+    ids = cl.items.filter((x: any) => !x?.deactivation_date && idDe(x) != null).map((x: any) => Number(idDe(x)));
+    sociosTotal = ids.length;
+  }
 
   // 4) Historial de cada socio: reservas confirmadas de ESA clase, día y hora
-  const encontrados: number[] = [];
+  const encontrados: number[] = previo ? [...previo.reservas_socios] : [];
   const incidencias: string[] = [];
-  let revisados = 0, enEspera = 0;
+  const hechos = new Set<number>();
+  let enEspera = previo?.en_espera ?? 0;
   let campos: string[] | null = null;
   await enParalelo(ids, PARALELO, async (id) => {
     const h = await paginar(deps, c, `clients/${id}/booking-history?id_from=${desde}`, ['bookings', 'history'], vencido);
-    if (h.error) { if (incidencias.length < 5) incidencias.push(`socio ${id}: ${h.error}`); return; }
-    revisados++;
+    if (h.error || h.truncado) { if (incidencias.length < 5) incidencias.push(`socio ${id}: ${h.error ?? 'historial incompleto'}`); return; }
+    hechos.add(id);
     for (const b of h.items) {
       if (!campos && b && typeof b === 'object') campos = Object.keys(b);
       const coincide = b?.day === fecha && String(b?.time ?? '').slice(0, 5) === hora && Number(b?.class?.id) === Number(clase.class_id) && !b?.cancellation_date;
@@ -343,26 +376,32 @@ export async function calcularOcupacion(deps: Deps, fecha: string, hora: string)
       if (b?.state === 'waiting_list') enEspera++; else encontrados.push(Number(b?.id));
     }
   }, vencido);
+  const pendientes = ids.filter(id => !hechos.has(id));
+  const revisados = (previo?.socios_revisados ?? 0) + hechos.size;
 
-  // 5) Invitados: los nuestros (los conocemos) y, si se puede, los que hayan apuntado otros
-  const nuestros = new Set(propias.map(p => p.booking_id));
+  // 5) Invitados (solo cuando ya se han revisado todos los socios): los nuestros y, si se puede, los de otros
   const invitadosPropios = propias.filter(p => !p.cancelada && p.fecha === fecha && p.hora === hora).length;
   let invitadosOtros: number | null = null;
-  const gi = await paginar(deps, c, `guests?id_from=${desde}`, ['guests'], vencido);
-  if (!gi.error) {
-    invitadosOtros = gi.items.filter((g: any) =>
-      g?.booking_day === fecha && String(g?.booking_time ?? '').slice(0, 5) === hora && /rack/i.test(String(g?.activity ?? ''))
-      && !g?.cancellation_date && !nuestros.has(Number(g?.id)) && !['PT', 'PRUEBA'].includes(String(g?.name ?? ''))).length;
+  let invitadosError: string | null = null;
+  if (pendientes.length === 0) {
+    const nuestros = new Set(propias.map(p => p.booking_id));
+    const gi = await paginar(deps, c, `guests?id_from=${desde}`, ['guests'], () => false);
+    if (gi.error || gi.truncado) invitadosError = gi.error ?? 'lista de invitados demasiado larga';
+    else {
+      invitadosOtros = gi.items.filter((g: any) =>
+        g?.booking_day === fecha && String(g?.booking_time ?? '').slice(0, 5) === hora && /rack/i.test(String(g?.activity ?? ''))
+        && !g?.cancellation_date && !nuestros.has(Number(g?.id)) && !['PT', 'PRUEBA'].includes(String(g?.name ?? ''))).length;
+    }
   }
 
   const socios = encontrados.length;
   const total = socios + invitadosPropios + (invitadosOtros ?? 0);
-  const completo = !vencido() && incidencias.length === 0 && revisados === ids.length;
+  const completo = pendientes.length === 0;
   return {
-    ok: true, fecha, hora, aforo: clase.aforo, socios, invitados_propios: invitadosPropios, invitados_otros: invitadosOtros,
+    ok: true, fecha, hora, aforo: clase.aforo, socios, invitados_propios: invitadosPropios, invitados_otros: invitadosOtros, invitados_error: invitadosError,
     en_espera: enEspera, total, libres: (clase.aforo ?? 0) - total, completo,
-    socios_total: ids.length, socios_revisados: revisados, solicitudes: c.solicitudes, reintentos_429: c.reintentos,
-    segundos: Math.round((deps.reloj() - inicio) / 100) / 10, ancla, desde, campos_historial: campos, incidencias,
+    socios_total: sociosTotal, socios_revisados: revisados, pendientes, solicitudes: c.solicitudes, reintentos_429: c.reintentos,
+    limite: c.ultimoLimite, segundos: Math.round((deps.reloj() - inicio) / 100) / 10, ancla, desde, campos_historial: campos, incidencias,
     reservas_socios: encontrados,
   };
 }
@@ -400,7 +439,7 @@ export async function manejar(req: Request, deps: Deps): Promise<Response> {
     if (cuerpo?.accion === 'prueba_cancelar') return responder(await cancelarPruebas(deps));
     if (cuerpo?.accion === 'prueba_listar') return responder({ ok: true, pruebas: await deps.pruebas.listar() });
     if (cuerpo?.accion === 'prueba_diagnostico') return responder(await diagnosticoPruebas(deps));
-    if (cuerpo?.accion === 'ocupacion') return responder(await calcularOcupacion(deps, String(cuerpo.fecha ?? ''), String(cuerpo.hora ?? '')));
+    if (cuerpo?.accion === 'ocupacion') return responder(await calcularOcupacion(deps, String(cuerpo.fecha ?? ''), String(cuerpo.hora ?? ''), cuerpo.previo ?? null));
 
     return responder({ error: 'Acción no válida.' }, 400);
   } catch (e: any) {
