@@ -10,9 +10,10 @@ function estadoHTML() {
   const cad = e.caducidad
     ? `<div class="hint">Caducidad guardada · acceso: ${esc(e.caducidad.access || '—')} · renovación: ${esc(e.caducidad.refresh || '—')}</div>`
     : '<div class="hint">Usando los tokens de los secretos de Supabase (aún no se ha renovado ninguno).</div>';
+  const lim = e.limite && Object.keys(e.limite).length ? `<div class="hint">Límite de uso indicado por AimHarder: ${esc(JSON.stringify(e.limite))}</div>` : '';
   return e.ok
-    ? `<div class="alert alert-ok">✔ ${esc(e.mensaje)}</div>${cad}`
-    : `<div class="alert alert-danger">✖ ${esc(e.mensaje || e.error || 'No se pudo conectar')}</div>`;
+    ? `<div class="alert alert-ok">✔ ${esc(e.mensaje)}</div>${cad}${lim}`
+    : `<div class="alert alert-danger">✖ ${esc(e.mensaje || e.error || 'No se pudo conectar')}${e.http ? ` (HTTP ${esc(e.http)})` : ''}</div>${lim}`;
 }
 
 function diaHTML() {
@@ -60,7 +61,7 @@ function ocupacionHTML() {
   const a = S.ah;
   let res = '';
   if (a.calculando) res = `<div class="alert alert-info" style="margin-top:14px">⏳ Calculando… ${a.progreso ? `<b>${esc(a.progreso)}</b> · ` : ''}lee las reservas de todos los socios respetando el límite de AimHarder; puede tardar unos minutos. No cierres la pantalla.</div>`;
-  else if (o && !o.ok) res = `<div class="alert alert-danger" style="margin-top:14px">✖ ${esc(o.error || 'Error')}${o.forma ? `<br><small>Campos recibidos: ${esc(o.forma.join(', '))}</small>` : ''}</div>`;
+  else if (o && !o.ok) res = `<div class="alert alert-danger" style="margin-top:14px">✖ ${esc(o.error || 'Error')}${o.http ? ` (HTTP ${esc(o.http)})` : ''}${o.forma ? `<br><small>Campos recibidos: ${esc(o.forma.join(', '))}</small>` : ''}${o.limite && Object.keys(o.limite).length ? `<br><small>Límite de uso indicado por AimHarder: ${esc(JSON.stringify(o.limite))}</small>` : ''}</div>`;
   else if (o) {
     const celda = (n, t, cl = '') => `<div class="kpi"><div class="kpi-n ${cl}">${esc(n)}</div><div class="kpi-l">${t}</div></div>`;
     res = `

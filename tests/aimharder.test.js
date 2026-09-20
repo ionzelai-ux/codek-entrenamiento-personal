@@ -548,6 +548,28 @@ test('ocupación: si falla la lista de invitados lo dice y no inventa el número
   assert.match(r.invitados_error, /HTTP 500/);
 });
 
+test('ocupación: si AimHarder sigue limitando desde el principio lo explica y devuelve sus cabeceras', async () => {
+  const e = entorno({ pruebasIniciales: [{ booking_id: 1 }] });
+  e.deps.fetchFn = async (url) => {
+    e.llamadas.push({ url: String(url) });
+    return new Response(JSON.stringify({ error: { message: 'Too many requests' } }), { status: 429, headers: { 'Retry-After': '60', 'X-RateLimit-Remaining': '0' } });
+  };
+  const r = await calcularOcupacion(e.deps, '2026-09-21', '11:00');
+  assert.equal(r.ok, false);
+  assert.equal(r.http, 429);
+  assert.match(r.error, /Espera unos minutos/);
+  assert.deepEqual(r.limite, { 'retry-after': '60', 'x-ratelimit-remaining': '0' });
+  assert.equal(e.llamadas.length, 7, '1 intento + 6 reintentos y se detiene: no sigue golpeando');
+});
+
+test('estado: devuelve las cabeceras de límite de uso si AimHarder las envía', async () => {
+  const e = entorno({});
+  e.deps.fetchFn = async () => new Response(JSON.stringify(CAL_RACK), { status: 200, headers: { 'X-RateLimit-Limit': '100', 'X-RateLimit-Remaining': '97', 'Content-Type': 'application/json' } });
+  const d = await (await manejar(post({ accion: 'estado' }), e.deps)).json();
+  assert.equal(d.ok, true);
+  assert.deepEqual(d.limite, { 'x-ratelimit-limit': '100', 'x-ratelimit-remaining': '97' });
+});
+
 test('ocupación: el estado para continuar se valida', async () => {
   const e = entorno({ pruebasIniciales: [{ booking_id: 1 }], enrutador: apiSocios({ listaClientes: clientes, socios: {} }) });
   const r = await calcularOcupacion(e.deps, '2026-09-21', '11:00', { pendientes: ['x; drop'], reservas_socios: [] });

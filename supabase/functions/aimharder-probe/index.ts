@@ -27,7 +27,8 @@ const MAX_PRUEBAS_ACTIVAS = 6;
 const RVID_POR_DIA = 400000;
 const DIAS_ATRAS = 45;
 const PARALELO = 2;                // peticiones simultáneas máximas
-const INTERVALO_MS = 500;          // separación mínima entre peticiones (AimHarder limita el ritmo: ≈ 2 por segundo)
+const INTERVALO_MS = 1000;         // separación mínima entre peticiones (AimHarder limita el ritmo: en la 1.ª prueba real
+                                   // aguantó ~110 por minuto con 429 continuos; se va a 60 por minuto para no rozar el límite)
 const MAX_REINTENTOS = 6;          // ante «demasiadas peticiones» (429)
 const PRESUPUESTO_MS = 110000;     // tiempo máximo de cada tanda (la función se corta a los ~150 s)
 const MAX_PAGINAS = 40;
@@ -333,6 +334,9 @@ export async function calcularOcupacion(deps: Deps, fecha: string, hora: string,
 
   // 1) La clase «Rack libre» de esa hora (además deja el token renovado antes de lanzar peticiones simultáneas)
   const cal = await pedirConReintento(deps, c, `calendar/${fecha}`);
+  if (cal.estado === 429) {
+    return { ok: false, http: 429, limite: c.ultimoLimite ?? cal.cab ?? null, error: 'AimHarder está limitando las peticiones («Too many requests»): se ha superado su cupo de uso. Espera unos minutos sin lanzar nada más y vuelve a intentarlo.' };
+  }
   if (cal.estado !== 200) return { ok: false, http: cal.estado, error: mensajeApi(cal) };
   const candidatas = (extraerClases(cal.json) ?? []).filter(x => x.es_rack && x.hora === hora && !x.cancelada);
   if (candidatas.length === 0) return { ok: false, error: `No hay ninguna clase «Rack libre» a las ${hora} el ${fecha}.` };
@@ -420,7 +424,8 @@ export async function manejar(req: Request, deps: Deps): Promise<Response> {
     if (cuerpo?.accion === 'estado') {
       const r = await llamarAimHarder(deps, 'GET', `calendar/${deps.hoy()}`);
       const ok = r.estado === 200;
-      return responder({ ok, http: r.estado, mensaje: ok ? 'Conexión correcta con AimHarder' : mensajeApi(r), caducidad: await deps.almacen.caducidad() });
+      // `limite`: cabeceras de límite de uso que haya enviado AimHarder (sirven para ajustar el ritmo)
+      return responder({ ok, http: r.estado, mensaje: ok ? 'Conexión correcta con AimHarder' : mensajeApi(r), limite: r.cab ?? null, caducidad: await deps.almacen.caducidad() });
     }
 
     if (cuerpo?.accion === 'calendario') {
