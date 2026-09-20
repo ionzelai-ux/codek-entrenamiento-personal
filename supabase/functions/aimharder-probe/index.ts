@@ -153,9 +153,16 @@ export async function reservarPrueba(deps: Deps, fecha: string, hora: string) {
     await llamarAimHarder(deps, 'POST', 'classes/booking/cancel', { booking_id: Number(id), reason: 'Prueba abortada' });
     return { ok: false, error: 'No se pudo apuntar la reserva de prueba (¿falta ejecutar sql/05_aimharder_pruebas.sql?). Se ha cancelado para no dejarla huérfana.' };
   }
+  // Estado que AimHarder da a la reserva ("confirmed" o "waiting_list"): si las que pasan del aforo
+  // salen en lista de espera, se podrá detectar cuándo no queda rack. Solo informativo.
+  let estadoReserva: string | null = null;
+  try {
+    const g = await llamarAimHarder(deps, 'GET', `bookings/${id}`);
+    if (g.estado === 200) estadoReserva = String(g.json?.data?.state ?? g.json?.state ?? '') || null;
+  } catch (_e) { /* no es imprescindible */ }
   return {
-    ok: true, booking_id: Number(id), schedule_id: clase.schedule_id, aforo: clase.aforo,
-    mensaje: `Reserva de prueba creada (nº ${id}) en «Rack libre» ${hora} del ${fecha}. Mira en AimHarder si las plazas ocupadas han subido.`,
+    ok: true, booking_id: Number(id), schedule_id: clase.schedule_id, aforo: clase.aforo, estado_reserva: estadoReserva,
+    mensaje: `Reserva de prueba creada (nº ${id}) en «Rack libre» ${hora} del ${fecha}. Estado en AimHarder: ${estadoReserva ?? 'no disponible'}. Mira también si las plazas ocupadas han subido.`,
   };
 }
 

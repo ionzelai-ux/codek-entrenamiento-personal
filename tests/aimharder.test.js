@@ -187,10 +187,12 @@ const CAL_11 = { data: [
 ] };
 
 test('prueba: reserva un invitado «PRUEBA PT» en el Rack libre de esa hora y la apunta', async () => {
-  const e = entorno({ respuestas: [json(CAL_11), json({ data: { message: 'The class has been booked successfully', id: 8989 } })] });
+  const e = entorno({ respuestas: [json(CAL_11), json({ data: { message: 'The class has been booked successfully', id: 8989 } }), json({ data: { id: 8989, state: 'confirmed' } })] });
   const r = await reservarPrueba(e.deps, '2026-09-21', '11:00');
   assert.equal(r.ok, true);
   assert.equal(r.booking_id, 8989);
+  assert.equal(r.estado_reserva, 'confirmed');
+  assert.equal(e.llamadas[2].url, 'https://api.aimharder.com/bookings/8989');
   assert.equal(r.schedule_id, 1402700, 'usa el horario del Rack libre, no el de la clase funcional');
   const reserva = e.llamadas[1];
   assert.equal(reserva.metodo, 'POST');
@@ -290,8 +292,24 @@ test('manejar: las acciones de prueba exigen ser administrador', async () => {
   }
 });
 
+test('prueba: si AimHarder pone la reserva en lista de espera (aforo superado) se muestra', async () => {
+  const e = entorno({ respuestas: [json(CAL_11), json({ data: { id: 31 } }), json({ data: { id: 31, state: 'waiting_list' } })] });
+  const r = await reservarPrueba(e.deps, '2026-09-21', '11:00');
+  assert.equal(r.ok, true);
+  assert.equal(r.estado_reserva, 'waiting_list');
+  assert.match(r.mensaje, /waiting_list/);
+});
+
+test('prueba: si no se puede leer el estado, la reserva sigue siendo válida', async () => {
+  const e = entorno({ respuestas: [json(CAL_11), json({ data: { id: 32 } }), json({ error: { message: 'nope' } }, 500)] });
+  const r = await reservarPrueba(e.deps, '2026-09-21', '11:00');
+  assert.equal(r.ok, true);
+  assert.equal(r.estado_reserva, null);
+  assert.equal(e.pruebas.length, 1);
+});
+
 test('manejar: reservar, listar y cancelar de extremo a extremo', async () => {
-  const e = entorno({ respuestas: [json(CAL_11), json({ data: { id: 555 } }), json({ data: { message: 'cancelled' } })] });
+  const e = entorno({ respuestas: [json(CAL_11), json({ data: { id: 555 } }), json({ data: { state: 'confirmed' } }), json({ data: { message: 'cancelled' } })] });
   const a = await (await manejar(post({ accion: 'prueba_reservar', fecha: '2026-09-21', hora: '11:00' }), e.deps)).json();
   assert.equal(a.ok, true);
   const l = await (await manejar(post({ accion: 'prueba_listar' }), e.deps)).json();
