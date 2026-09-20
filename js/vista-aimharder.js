@@ -4,6 +4,17 @@
 import { S, bus } from './store.js';
 import { esc, fmtFechaDia, fmtFecha, dialogo } from './util.js';
 
+const hhmm = iso => new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+
+// Freno de seguridad: cuántas peticiones a AimHarder llevamos en la última hora y si estamos parados
+function usoHTML(u) {
+  if (!u) return '';
+  const frenado = u.bloqueoHasta
+    ? `<div class="alert alert-warn" style="margin-top:8px">⛔ Freno de seguridad activo: no se harán peticiones a AimHarder hasta las <b>${esc(hhmm(u.bloqueoHasta))}</b> (para no alargar su bloqueo).
+        <button class="btn btn-secondary btn-sm" data-acc="ah-quitar-freno" style="margin-left:10px">Quitar el freno</button></div>` : '';
+  return `<div class="hint" style="margin-top:6px">Peticiones a AimHarder en la última hora: <b>${esc(u.usadas)}/${esc(u.limite)}</b> (tope que nos ponemos).</div>${frenado}`;
+}
+
 function estadoHTML() {
   const e = S.ah.estado;
   if (!e) return '';
@@ -12,8 +23,8 @@ function estadoHTML() {
     : '<div class="hint">Usando los tokens de los secretos de Supabase (aún no se ha renovado ninguno).</div>';
   const lim = e.limite && Object.keys(e.limite).length ? `<div class="hint">Límite de uso indicado por AimHarder: ${esc(JSON.stringify(e.limite))}</div>` : '';
   return e.ok
-    ? `<div class="alert alert-ok">✔ ${esc(e.mensaje)}</div>${cad}${lim}`
-    : `<div class="alert alert-danger">✖ ${esc(e.mensaje || e.error || 'No se pudo conectar')}${e.http ? ` (HTTP ${esc(e.http)})` : ''}</div>${lim}`;
+    ? `<div class="alert alert-ok">✔ ${esc(e.mensaje)}</div>${cad}${lim}${usoHTML(e.uso)}`
+    : `<div class="alert alert-danger">✖ ${esc(e.mensaje || e.error || 'No se pudo conectar')}${e.http ? ` (HTTP ${esc(e.http)})` : ''}</div>${lim}${usoHTML(e.uso)}`;
 }
 
 function diaHTML() {
@@ -61,7 +72,7 @@ function ocupacionHTML() {
   const a = S.ah;
   let res = '';
   if (a.calculando) res = `<div class="alert alert-info" style="margin-top:14px">⏳ Calculando… ${a.progreso ? `<b>${esc(a.progreso)}</b> · ` : ''}lee las reservas de todos los socios respetando el límite de AimHarder; puede tardar unos minutos. No cierres la pantalla.</div>`;
-  else if (o && !o.ok) res = `<div class="alert alert-danger" style="margin-top:14px">✖ ${esc(o.error || 'Error')}${o.http ? ` (HTTP ${esc(o.http)})` : ''}${o.forma ? `<br><small>Campos recibidos: ${esc(o.forma.join(', '))}</small>` : ''}${o.limite && Object.keys(o.limite).length ? `<br><small>Límite de uso indicado por AimHarder: ${esc(JSON.stringify(o.limite))}</small>` : ''}</div>`;
+  else if (o && !o.ok) res = `<div class="alert alert-danger" style="margin-top:14px">✖ ${esc(o.error || 'Error')}${o.http ? ` (HTTP ${esc(o.http)})` : ''}${o.forma ? `<br><small>Campos recibidos: ${esc(o.forma.join(', '))}</small>` : ''}${o.limite && Object.keys(o.limite).length ? `<br><small>Límite de uso indicado por AimHarder: ${esc(JSON.stringify(o.limite))}</small>` : ''}</div>${usoHTML(o.uso)}`;
   else if (o) {
     const celda = (n, t, cl = '') => `<div class="kpi"><div class="kpi-n ${cl}">${esc(n)}</div><div class="kpi-l">${t}</div></div>`;
     res = `
@@ -72,6 +83,8 @@ function ocupacionHTML() {
       </div>
       <div class="alert ${o.completo ? 'alert-ok' : 'alert-warn'}">${o.completo ? '✔ Cálculo completo' : '⚠ Cálculo INCOMPLETO: no te fíes de este número'} ·
         socios revisados ${esc(o.socios_revisados)}/${esc(o.socios_total)} · ${esc(o.solicitudes)} peticiones · ${esc(o.segundos)} s${o.reintentos_429 ? ` · ${esc(o.reintentos_429)} reintentos por límite de uso` : ''}</div>
+      ${o.corte ? `<div class="alert alert-warn">⏸ El cálculo se detuvo antes de terminar: ${esc(o.corte)} Lo hecho se conserva; se puede continuar más tarde.</div>` : ''}
+      ${usoHTML(o.uso)}
       ${o.invitados_error ? `<div class="hint">No se pudo contar a los invitados de otros (${esc(o.invitados_error)}): el total puede quedarse corto.</div>` : ''}
       ${o.limite ? `<div class="hint">Límite de uso indicado por AimHarder: ${esc(JSON.stringify(o.limite))}</div>` : ''}
       ${o.en_espera ? `<div class="hint">Además hay ${esc(o.en_espera)} reserva(s) en lista de espera (no cuentan).</div>` : ''}
@@ -95,7 +108,7 @@ function pruebasHTML() {
   const msg = p ? (p.ok
     ? `<div class="alert alert-ok">✔ ${esc(p.mensaje || 'Hecho')}</div>`
     : `<div class="alert alert-danger">✖ ${esc(p.error || p.mensaje || 'Error')}${p.http ? `<br><small>Respuesta de AimHarder: HTTP ${esc(p.http)}</small>` : ''}${
-      (p.resultados || []).filter(r => !r.ok).map(r => `<br><small>Reserva ${esc(r.booking_id)}: ${esc(r.error)}</small>`).join('')}</div>`) : '';
+      (p.resultados || []).filter(r => !r.ok).map(r => `<br><small>Reserva ${esc(r.booking_id)}: ${esc(r.error)}</small>`).join('')}</div>${usoHTML(p.uso)}`) : '';
   const filas = (S.ah.pruebas || []).map(x => `
     <tr><td class="num">${esc(x.booking_id)}</td><td>${esc(fmtFecha(x.fecha))} ${esc(x.hora)}</td>
       <td>${x.cancelada ? '<span class="chip gris">CANCELADA</span>' : '<span class="chip amarillo">ACTIVA</span>'}</td></tr>`).join('');
@@ -185,6 +198,17 @@ export const accionesAimHarder = {
     if (r) S.ah.prueba = r;
     await accionesAimHarder['ah-listar']();
   },
+  'ah-quitar-freno': async () => {
+    const ok = await dialogo({
+      titulo: 'Quitar el freno de seguridad',
+      mensaje: '<p>El freno evita insistir mientras AimHarder nos está limitando. Quítalo <b>solo si tienes claro que ya puedes volver a usar la API</b> (por ejemplo, porque AimHarder te lo ha confirmado). Si sigue limitando, se volverá a activar.</p>',
+      ok: 'Quitar el freno',
+    });
+    if (!ok) return;
+    const r = await consultar({ accion: 'uso_reiniciar' });
+    if (r?.ok) { S.ah.estado = { ...(S.ah.estado || {}), uso: r.uso }; S.ah.ocup = null; S.ah.prueba = null; }
+    bus.repintar();
+  },
   'ah-ocupacion': async () => {
     const fecha = document.getElementById('ah-ofecha')?.value, hora = document.getElementById('ah-ohora')?.value;
     S.ah.ofecha = fecha || S.ah.ofecha; S.ah.ohora = hora || S.ah.ohora;
@@ -195,7 +219,7 @@ export const accionesAimHarder = {
       // Cada tanda dura como mucho ~2 minutos (límite de la función); si faltan socios se continúa sola, hasta 6 tandas.
       let r = await S.api.consultarAimHarder({ accion: 'ocupacion', fecha, hora });
       let segundos = r.segundos || 0;
-      for (let ronda = 1; r.ok && !r.completo && r.pendientes?.length && ronda < 6; ronda++) {
+      for (let ronda = 1; r.ok && !r.completo && !r.corte && r.pendientes?.length && ronda < 6; ronda++) {
         S.ah.progreso = `${r.socios_revisados}/${r.socios_total} socios`;
         bus.repintar();
         const previo = { pendientes: r.pendientes, reservas_socios: r.reservas_socios, en_espera: r.en_espera,

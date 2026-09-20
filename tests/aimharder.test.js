@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   llamarAimHarder, manejar, extraerClases, ocultarTokens, ErrorAimHarder, reservarPrueba, cancelarPruebas, diagnosticoPruebas,
-  calcularOcupacion,
+  calcularOcupacion, crearControlUso,
 } from '../supabase/functions/aimharder-probe/index.ts';
 
 const JWT = (n) => `eyJhbGciOiJIUzI1NiJ9.eyJuIjoi${n}In0.firma${n}`;   // aspecto de token
@@ -10,9 +10,16 @@ const json = (cuerpo, estado = 200) => new Response(JSON.stringify(cuerpo), { st
 
 // Almacén en memoria + API simulada que registra cada llamada
 function entorno({ tokens = { access: JWT('A1'), refresh: JWT('R1') }, respuestas = [], falloGuardar = false, admin = true,
-  ahora = '2026-09-20 18:00', pruebasIniciales = [], falloRegistrar = false, enrutador = null, msPorLlamadaReloj = 0 } = {}) {
+  ahora = '2026-09-20 18:00', pruebasIniciales = [], falloRegistrar = false, enrutador = null, msPorLlamadaReloj = 0,
+  usadasIniciales = 0, bloqueoInicial = null } = {}) {
   const llamadas = [];
   let guardado = null;
+  const almacenUso = {
+    filas: [],
+    leer: async () => ({ usadas: usadasIniciales, bloqueoHasta: bloqueoInicial }),
+    guardar: async f => { almacenUso.filas.push(f); },
+    quitarBloqueo: async () => { bloqueoInicial = null; },
+  };
   const cola = [...respuestas];
   const pruebas = pruebasIniciales.map(p => ({ schedule_id: 1, fecha: '2026-09-21', hora: '11:00', cancelada: null, ...p }));
   let relojMs = 0;
@@ -21,6 +28,7 @@ function entorno({ tokens = { access: JWT('A1'), refresh: JWT('R1') }, respuesta
     esAdmin: async () => admin,
     hoy: () => '2026-09-21',
     ahoraMadrid: () => ahora,
+    uso: crearControlUso(almacenUso, () => 0),
     pausa: async ms => { pausas.push(ms); },
     reloj: () => { relojMs += msPorLlamadaReloj; return relojMs; },
     pruebas: {
@@ -41,7 +49,7 @@ function entorno({ tokens = { access: JWT('A1'), refresh: JWT('R1') }, respuesta
       caducidad: async () => (guardado ? guardado.exp : null),
     },
   };
-  return { deps, llamadas, guardado: () => guardado, pruebas, pausas };
+  return { deps, llamadas, guardado: () => guardado, pruebas, pausas, almacenUso };
 }
 const post = (cuerpo, cabeceras = {}) => new Request('https://x/fn', { method: 'POST', body: JSON.stringify(cuerpo), headers: { Authorization: 'Bearer usuario', ...cabeceras } });
 const CLASES = { appointments: [
@@ -548,18 +556,124 @@ test('ocupación: si falla la lista de invitados lo dice y no inventa el número
   assert.match(r.invitados_error, /HTTP 500/);
 });
 
-test('ocupación: si AimHarder sigue limitando desde el principio lo explica y devuelve sus cabeceras', async () => {
-  const e = entorno({ pruebasIniciales: [{ booking_id: 1 }] });
+const limitando = (e, cabeceras = {}) => {
   e.deps.fetchFn = async (url) => {
     e.llamadas.push({ url: String(url) });
-    return new Response(JSON.stringify({ error: { message: 'Too many requests' } }), { status: 429, headers: { 'Retry-After': '60', 'X-RateLimit-Remaining': '0' } });
+    return new Response(JSON.stringify({ error: { message: 'Too many requests' } }), { status: 429, headers: cabeceras });
   };
+};
+
+// ── Freno de seguridad ────────────────────────────────────────────────────
+test('freno: un 429 con Retry-After largo activa el bloqueo, se apunta y no se vuelve a llamar', async () => {
+  const e = entorno({ pruebasIniciales: [{ booking_id: 1 }] });
+  limitando(e, { 'Retry-After': '60', 'X-RateLimit-Remaining': '0' });
+  const d = await (await manejar(post({ accion: 'ocupacion', fecha: '2026-09-21', hora: '11:00' }), e.deps)).json();
+  assert.equal(d.ok, false);
+  assert.match(d.error, /no se harán más peticiones hasta las/);
+  assert.equal(e.llamadas.length, 1, 'una sola petición real: no insiste');
+  assert.ok(d.uso.bloqueoHasta, 'el bloqueo queda indicado');
+  assert.deepEqual(e.almacenUso.filas.map(f => [f.llamadas, f.limitadas, f.bloqueoHasta !== null]), [[1, 1, true]], 'se apunta en la base de datos');
+});
+
+test('freno: dos 429 seguidos sin Retry-After también frenan (después de un solo reintento)', async () => {
+  const e = entorno({ pruebasIniciales: [{ booking_id: 1 }] });
+  limitando(e);
+  const d = await (await manejar(post({ accion: 'ocupacion', fecha: '2026-09-21', hora: '11:00' }), e.deps)).json();
+  assert.equal(d.ok, false);
+  assert.equal(e.llamadas.length, 2);
+  assert.ok(d.uso.bloqueoHasta);
+});
+
+test('freno: una ráfaga corta (Retry-After pequeño) se espera y se reintenta sin bloquear', async () => {
+  const ruteo = apiSocios({ listaClientes: clientes.slice(0, 1), socios: { 1: [[reserva(1)]] } });
+  let primera = true;
+  const e = entorno({
+    pruebasIniciales: [{ booking_id: 143000000 }],
+    enrutador: (ruta, n) => {
+      if (primera && ruta.startsWith('calendar/')) { primera = false; return new Response('{}', { status: 429, headers: { 'Retry-After': '2' } }); }
+      return ruteo(ruta, n);
+    },
+  });
   const r = await calcularOcupacion(e.deps, '2026-09-21', '11:00');
-  assert.equal(r.ok, false);
-  assert.equal(r.http, 429);
-  assert.match(r.error, /Espera unos minutos/);
-  assert.deepEqual(r.limite, { 'retry-after': '60', 'x-ratelimit-remaining': '0' });
-  assert.equal(e.llamadas.length, 7, '1 intento + 6 reintentos y se detiene: no sigue golpeando');
+  assert.equal(r.ok, true, 'tras esperar 2 s el cálculo sigue');
+  assert.equal(r.socios, 1);
+  assert.equal(r.reintentos_429, 1);
+  assert.equal(e.deps.uso.estado().bloqueoHasta, null, 'una ráfaga corta no bloquea');
+  assert.ok(e.pausas.some(ms => ms >= 2000), 'esperó lo que pidió AimHarder');
+});
+
+test('freno: con un bloqueo vigente en la base de datos no se hace NINGUNA petición', async () => {
+  const e = entorno({ bloqueoInicial: 3_000_000_000_000, pruebasIniciales: [{ booking_id: 5 }], respuestas: [] });      // bloqueo muy en el futuro
+  for (const accion of ['estado', 'calendario', 'ocupacion', 'prueba_reservar', 'prueba_cancelar', 'prueba_diagnostico']) {
+    const d = await (await manejar(post({ accion, fecha: '2026-09-21', hora: '11:00' }), e.deps)).json();
+    assert.equal(d.ok, false, accion);
+    assert.match(d.error, /hasta las/, accion);
+  }
+  assert.equal(e.llamadas.length, 0);
+});
+
+test('freno: cupo de la última hora agotado → no se llama y se explica', async () => {
+  const e = entorno({ usadasIniciales: 90, respuestas: [] });
+  const d = await (await manejar(post({ accion: 'estado' }), e.deps)).json();
+  assert.equal(d.ok, false);
+  assert.match(d.error, /Cupo de peticiones de la última hora agotado \(90\/90\)/);
+  assert.equal(e.llamadas.length, 0);
+  assert.deepEqual([d.uso.usadas, d.uso.limite], [90, 90]);
+});
+
+test('freno: cada invocación apunta cuántas peticiones hizo y "estado" informa del uso', async () => {
+  const e = entorno({ usadasIniciales: 10, respuestas: [json(CAL_RACK)] });
+  const d = await (await manejar(post({ accion: 'estado' }), e.deps)).json();
+  assert.equal(d.ok, true);
+  assert.deepEqual(d.uso, { usadas: 11, limite: 90, bloqueoHasta: null });
+  assert.deepEqual(e.almacenUso.filas, [{ llamadas: 1, limitadas: 0, bloqueoHasta: null }]);
+});
+
+test('freno: listar las pruebas no cuenta ni consulta el uso (no llama a AimHarder)', async () => {
+  const e = entorno({ pruebasIniciales: [{ booking_id: 5 }], respuestas: [] });
+  const d = await (await manejar(post({ accion: 'prueba_listar' }), e.deps)).json();
+  assert.equal(d.ok, true);
+  assert.deepEqual(e.almacenUso.filas, []);
+});
+
+test('freno: el administrador puede quitar el bloqueo local; otros no', async () => {
+  const e = entorno({ bloqueoInicial: 3_000_000_000_000, respuestas: [json(CAL_RACK)] });
+  const antes = await (await manejar(post({ accion: 'estado' }), e.deps)).json();
+  assert.equal(antes.ok, false);
+  const r = await (await manejar(post({ accion: 'uso_reiniciar' }), e.deps)).json();
+  assert.equal(r.ok, true);
+  assert.equal(r.uso.bloqueoHasta, null);
+  const despues = await (await manejar(post({ accion: 'estado' }), e.deps)).json();
+  assert.equal(despues.ok, true);
+  const n = entorno({ admin: false, bloqueoInicial: 3_000_000_000_000 });
+  assert.equal((await manejar(post({ accion: 'uso_reiniciar' }), n.deps)).status, 403);
+});
+
+test('freno: si el cupo se agota a mitad del cálculo de ocupación, devuelve lo hecho y se puede continuar', async () => {
+  const e = entorno({
+    usadasIniciales: 86,                                           // quedan 4: calendario + 2 páginas de socios + 1 historial
+    pruebasIniciales: [{ booking_id: 143000000 }],
+    enrutador: apiSocios({ listaClientes: clientes, socios: { 1: [[reserva(1)]], 2: [[reserva(5)]], 4: [[reserva(9)]] } }),
+  });
+  await e.deps.uso.cargar();                                        // (lo que hace `manejar` al empezar cada petición)
+  const r = await calcularOcupacion(e.deps, '2026-09-21', '11:00');
+  assert.equal(r.ok, true);
+  assert.equal(r.completo, false);
+  assert.match(r.corte, /Cupo de peticiones/);
+  assert.equal(r.socios_revisados, 1);
+  assert.equal(r.pendientes.length, 2, 'los otros dos socios quedan pendientes, no se pierden');
+  assert.equal(r.socios, 1, 'lo ya encontrado se conserva');
+  assert.equal(r.invitados_otros, null);
+});
+
+test('freno: el bloqueo no se pierde aunque la petición que lo provoca sea la última', async () => {
+  const e = entorno({ pruebasIniciales: [{ booking_id: 1 }] });
+  limitando(e, { 'Retry-After': '90' });
+  await manejar(post({ accion: 'estado' }), e.deps);
+  const siguiente = entorno({ bloqueoInicial: e.almacenUso.filas[0].bloqueoHasta, respuestas: [] });
+  const d = await (await manejar(post({ accion: 'estado' }), siguiente.deps)).json();
+  assert.equal(d.ok, false);
+  assert.equal(siguiente.llamadas.length, 0, 'lo apuntado en una invocación frena a la siguiente');
 });
 
 test('estado: devuelve las cabeceras de límite de uso si AimHarder las envía', async () => {

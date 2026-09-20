@@ -64,6 +64,12 @@ reservas confirmadas de todos los socios en esa clase/día/hora (`clients` + `cl
 por número de reserva) + invitados (los propios y, si la lista lo permite, los de otros). Solo devuelve recuentos y números
 de reserva (nunca nombres/emails/teléfonos). Sirve para avisar cuando una sesión de última hora no tiene rack libre.
 
+**Límite de uso de AimHarder y freno de seguridad** (`sql/06_aimharder_uso.sql`): la API responde 429 «Too many requests» si se
+supera su cupo (en la primera prueba real aceptó ≈100 peticiones y rechazó el resto, y seguía rechazando una hora después).
+La función apunta cuántas peticiones hace (tope propio: 90 por hora) y, tras un 429 serio, **no vuelve a llamar** durante un
+rato (insistir alarga el bloqueo); el administrador puede quitar el freno desde la pantalla. El ritmo es de 1 petición por
+segundo. Hay que preguntar a AimHarder el límite exacto y ajustar `LIMITE_HORA`.
+
 Notas de la API: el calendario (`GET calendar/AAAA-MM-DD`) devuelve `{ data: [...] }` con `schedule_id`, hora, nombre y aforo,
 pero **no las plazas ocupadas**. Reservar: `POST classes/booking/guest` (`schedule_id` + `booking_date`) → devuelve el id de
 reserva; cancelar: `POST classes/booking/cancel` (`booking_id`; no admite cancelar con menos de 1 h).

@@ -30,6 +30,12 @@ const PARALELO = 2;                // peticiones simultáneas máximas
 const INTERVALO_MS = 1000;         // separación mínima entre peticiones (AimHarder limita el ritmo: en la 1.ª prueba real
                                    // aguantó ~110 por minuto con 429 continuos; se va a 60 por minuto para no rozar el límite)
 const MAX_REINTENTOS = 6;          // ante «demasiadas peticiones» (429)
+// Freno de seguridad (sql/06_aimharder_uso.sql). En la 1.ª prueba real AimHarder aceptó ≈ 100 peticiones y
+// rechazó el resto, y seguía rechazando una hora después: se trabaja por debajo de ese tope y, al primer
+// bloqueo serio, no se vuelve a llamar durante un rato (insistir lo alargaría). Ajustar cuando AimHarder diga su límite.
+const LIMITE_HORA = 90;            // peticiones máximas por hora que se permite hacer esta integración
+const BLOQUEO_MS = 30 * 60 * 1000; // parada tras un 429 serio (si AimHarder pide más con Retry-After, se respeta)
+const RAFAGA_MAX_MS = 15000;       // un 429 con Retry-After ≤ 15 s se trata como ráfaga: se espera y se reintenta
 const PRESUPUESTO_MS = 110000;     // tiempo máximo de cada tanda (la función se corta a los ~150 s)
 const MAX_PAGINAS = 40;
 
@@ -46,10 +52,24 @@ export interface AlmacenPruebas {
   listar(): Promise<Prueba[]>;
   marcarCancelada(booking_id: number): Promise<void>;
 }
+export interface AlmacenUso {
+  leer(): Promise<{ usadas: number; bloqueoHasta: number | null }>;   // peticiones de la última hora y bloqueo vigente (ms)
+  guardar(f: { llamadas: number; limitadas: number; bloqueoHasta: number | null }): Promise<void>;
+  quitarBloqueo(): Promise<void>;
+}
+export interface ControlUso {
+  cargar(): Promise<void>;
+  antes(): void;                                        // lanza si hay bloqueo o el cupo está agotado; si no, cuenta la petición
+  respuesta(estado: number, retryAfterMs: number): void;
+  guardar(): Promise<void>;
+  reiniciar(): Promise<void>;
+  estado(): { usadas: number; limite: number; bloqueoHasta: string | null };
+}
 export interface Deps {
   esAdmin(authorization: string | null): Promise<boolean>;
   almacen: AlmacenTokens;
   pruebas: AlmacenPruebas;
+  uso: ControlUso;
   fetchFn: typeof fetch;
   hoy(): string;
   ahoraMadrid(): string;           // 'AAAA-MM-DD HH:MM' en hora de Madrid
@@ -64,6 +84,45 @@ export class ErrorAimHarder extends Error {
 }
 
 export const ocultarTokens = (texto: string): string => texto.replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[token]');
+
+// ── Freno de seguridad ─────────────────────────────────────────────────────
+const horaMadrid = (ms: number): string => new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid', hour: '2-digit', minute: '2-digit' }).format(new Date(ms));
+
+export function crearControlUso(almacen: AlmacenUso, reloj: () => number): ControlUso {
+  let usadas = 0, bloqueoHasta: number | null = null, llamadas = 0, limitadas = 0, seguidas = 0;
+  return {
+    async cargar() {
+      const u = await almacen.leer();
+      usadas = u.usadas; bloqueoHasta = u.bloqueoHasta; llamadas = 0; limitadas = 0; seguidas = 0;
+    },
+    antes() {
+      if (bloqueoHasta !== null && bloqueoHasta > reloj()) {
+        throw new ErrorAimHarder(`AimHarder nos está limitando el uso («Too many requests»). Para no alargar el bloqueo no se harán más peticiones hasta las ${horaMadrid(bloqueoHasta)} (hora de Madrid).`, 429);
+      }
+      if (usadas + llamadas >= LIMITE_HORA) {
+        throw new ErrorAimHarder(`Cupo de peticiones de la última hora agotado (${usadas + llamadas}/${LIMITE_HORA}). Se espera para no pasar el límite de AimHarder.`, 429);
+      }
+      llamadas++;
+    },
+    respuesta(estado, retryAfterMs) {
+      if (estado !== 429) { seguidas = 0; return; }
+      limitadas++; seguidas++;
+      // Ráfaga corta (Retry-After pequeño y no repetido): se reintenta. Cualquier otro 429: parada larga.
+      if (retryAfterMs > RAFAGA_MAX_MS || seguidas >= 2) bloqueoHasta = reloj() + Math.max(retryAfterMs, BLOQUEO_MS);
+    },
+    async guardar() {
+      if (llamadas === 0 && limitadas === 0) return;
+      const f = { llamadas, limitadas, bloqueoHasta: limitadas > 0 ? bloqueoHasta : null };
+      usadas += llamadas; llamadas = 0; limitadas = 0;
+      await almacen.guardar(f);
+    },
+    async reiniciar() { await almacen.quitarBloqueo(); bloqueoHasta = null; seguidas = 0; },
+    estado() {
+      return { usadas: usadas + llamadas, limite: LIMITE_HORA, bloqueoHasta: bloqueoHasta !== null && bloqueoHasta > reloj() ? new Date(bloqueoHasta).toISOString() : null };
+    },
+  };
+}
+const retryAfterMs = (r: { cab?: Record<string, string> }): number => { const s = Number(r.cab?.['retry-after']); return Number.isFinite(s) && s > 0 ? s * 1000 : 0; };
 
 async function pedir(fetchFn: typeof fetch, metodo: string, ruta: string, token: string, cuerpo?: unknown): Promise<Respuesta> {
   const r = await fetchFn(`${API}/${ruta}`, {
@@ -84,7 +143,9 @@ const caducado = (r: Respuesta): boolean =>
 
 // Renueva los tokens. La pareja anterior queda invalidada, así que se guarda ANTES de usarla.
 async function renovar(deps: Deps, t: Tokens): Promise<Tokens> {
+  deps.uso.antes();
   const r = await pedir(deps.fetchFn, 'GET', 'auth/tokens/refresh', t.refresh);
+  deps.uso.respuesta(r.estado, retryAfterMs(r));
   const d = r.json?.data ?? r.json;
   if (r.estado !== 200 || !d?.['access-token'] || !d?.['refresh-token']) {
     throw new ErrorAimHarder(`No se pudieron renovar los tokens (HTTP ${r.estado}). Si el refresh token caducó, pulsa «Refrescar tokens» en AimHarder y actualiza los secretos de Supabase.`, 502);
@@ -113,11 +174,15 @@ function renovarUnaVez(deps: Deps, t: Tokens): Promise<Tokens> {
 export async function llamarAimHarder(deps: Deps, metodo: string, ruta: string, cuerpo?: unknown): Promise<Respuesta> {
   let t = await deps.almacen.leer();
   if (!t) throw new ErrorAimHarder('Faltan los tokens: crea los secretos AIMHARDER_ACCESS_TOKEN y AIMHARDER_REFRESH_TOKEN en Supabase (Edge Functions → Secrets).', 500);
+  deps.uso.antes();
   let r = await pedir(deps.fetchFn, metodo, ruta, t.access, cuerpo);
+  deps.uso.respuesta(r.estado, retryAfterMs(r));
   if (caducado(r)) {                        // token de acceso caducado: se renueva una vez y se reintenta
     const actual = await deps.almacen.leer();
     t = actual && actual.access !== t.access ? actual : await renovarUnaVez(deps, t);   // otro ya lo renovó → usar el nuevo
+    deps.uso.antes();
     r = await pedir(deps.fetchFn, metodo, ruta, t.access, cuerpo);
+    deps.uso.respuesta(r.estado, retryAfterMs(r));
   }
   return r;
 }
@@ -369,8 +434,16 @@ export async function calcularOcupacion(deps: Deps, fecha: string, hora: string,
   const hechos = new Set<number>();
   let enEspera = previo?.en_espera ?? 0;
   let campos: string[] | null = null;
+  let corte: string | null = null;                 // motivo por el que se paró antes de acabar (bloqueo o cupo agotado)
+  const paraSeguir = () => vencido() || corte !== null;
   await enParalelo(ids, PARALELO, async (id) => {
-    const h = await paginar(deps, c, `clients/${id}/booking-history?id_from=${desde}`, ['bookings', 'history'], vencido);
+    let h;
+    try {
+      h = await paginar(deps, c, `clients/${id}/booking-history?id_from=${desde}`, ['bookings', 'history'], paraSeguir);
+    } catch (e) {
+      if (e instanceof ErrorAimHarder) { corte = e.message; return; }     // el freno de seguridad saltó: se conserva lo hecho
+      throw e;
+    }
     if (h.error || h.truncado) { if (incidencias.length < 5) incidencias.push(`socio ${id}: ${h.error ?? 'historial incompleto'}`); return; }
     hechos.add(id);
     for (const b of h.items) {
@@ -379,7 +452,7 @@ export async function calcularOcupacion(deps: Deps, fecha: string, hora: string,
       if (!coincide) continue;
       if (b?.state === 'waiting_list') enEspera++; else encontrados.push(Number(b?.id));
     }
-  }, vencido);
+  }, paraSeguir);
   const pendientes = ids.filter(id => !hechos.has(id));
   const revisados = (previo?.socios_revisados ?? 0) + hechos.size;
 
@@ -406,7 +479,7 @@ export async function calcularOcupacion(deps: Deps, fecha: string, hora: string,
     en_espera: enEspera, total, libres: (clase.aforo ?? 0) - total, completo,
     socios_total: sociosTotal, socios_revisados: revisados, pendientes, solicitudes: c.solicitudes, reintentos_429: c.reintentos,
     limite: c.ultimoLimite, segundos: Math.round((deps.reloj() - inicio) / 100) / 10, ancla, desde, campos_historial: campos, incidencias,
-    reservas_socios: encontrados,
+    reservas_socios: encontrados, corte, uso: deps.uso.estado(),
   };
 }
 
@@ -421,11 +494,19 @@ export async function manejar(req: Request, deps: Deps): Promise<Response> {
     }
     const cuerpo: any = await req.json().catch(() => ({}));
 
+    if (cuerpo?.accion === 'prueba_listar') return responder({ ok: true, pruebas: await deps.pruebas.listar() });   // no llama a AimHarder
+    await deps.uso.cargar();                     // cuánto se ha usado la última hora y si hay un bloqueo vigente
+
+    if (cuerpo?.accion === 'uso_reiniciar') {
+      await deps.uso.reiniciar();                // el administrador da por terminado el bloqueo (lo decide él)
+      return responder({ ok: true, uso: deps.uso.estado() });
+    }
+
     if (cuerpo?.accion === 'estado') {
       const r = await llamarAimHarder(deps, 'GET', `calendar/${deps.hoy()}`);
       const ok = r.estado === 200;
       // `limite`: cabeceras de límite de uso que haya enviado AimHarder (sirven para ajustar el ritmo)
-      return responder({ ok, http: r.estado, mensaje: ok ? 'Conexión correcta con AimHarder' : mensajeApi(r), limite: r.cab ?? null, caducidad: await deps.almacen.caducidad() });
+      return responder({ ok, http: r.estado, mensaje: ok ? 'Conexión correcta con AimHarder' : mensajeApi(r), limite: r.cab ?? null, uso: deps.uso.estado(), caducidad: await deps.almacen.caducidad() });
     }
 
     if (cuerpo?.accion === 'calendario') {
@@ -442,14 +523,15 @@ export async function manejar(req: Request, deps: Deps): Promise<Response> {
 
     if (cuerpo?.accion === 'prueba_reservar') return responder(await reservarPrueba(deps, String(cuerpo.fecha ?? ''), String(cuerpo.hora ?? '')));
     if (cuerpo?.accion === 'prueba_cancelar') return responder(await cancelarPruebas(deps));
-    if (cuerpo?.accion === 'prueba_listar') return responder({ ok: true, pruebas: await deps.pruebas.listar() });
     if (cuerpo?.accion === 'prueba_diagnostico') return responder(await diagnosticoPruebas(deps));
     if (cuerpo?.accion === 'ocupacion') return responder(await calcularOcupacion(deps, String(cuerpo.fecha ?? ''), String(cuerpo.hora ?? ''), cuerpo.previo ?? null));
 
     return responder({ error: 'Acción no válida.' }, 400);
   } catch (e: any) {
-    if (e instanceof ErrorAimHarder) return responder({ ok: false, error: e.message });
+    if (e instanceof ErrorAimHarder) return responder({ ok: false, error: e.message, uso: deps.uso.estado() });
     return responder({ ok: false, error: ocultarTokens(String(e?.message ?? e)) }, 500);
+  } finally {
+    await deps.uso.guardar().catch(() => { /* si no se puede apuntar, no se rompe la respuesta */ });
   }
 }
 
@@ -497,10 +579,34 @@ if (typeof Deno !== 'undefined') {
       },
     };
 
+    const almacenUso: AlmacenUso = {
+      async leer() {
+        const ahora = Date.now();
+        const hace1h = new Date(ahora - 3600000).toISOString();
+        const recientes = await admin.from('aimharder_uso').select('llamadas').gte('at', hace1h);
+        // Si la tabla no existe NO se sigue: sin freno de seguridad se podría alargar el bloqueo de AimHarder.
+        if (recientes.error) throw new ErrorAimHarder('Falta la tabla aimharder_uso: ejecuta sql/06_aimharder_uso.sql en Supabase.', 500);
+        const vigentes = await admin.from('aimharder_uso').select('bloqueo_hasta').gt('bloqueo_hasta', new Date(ahora).toISOString());
+        const usadas = (recientes.data ?? []).reduce((t: number, f: any) => t + (f.llamadas ?? 0), 0);
+        const hastas = (vigentes.data ?? []).map((f: any) => Date.parse(f.bloqueo_hasta)).filter((ms: number) => ms > ahora);
+        return { usadas, bloqueoHasta: hastas.length ? Math.max(...hastas) : null };
+      },
+      async guardar(f) {
+        const { error } = await admin.from('aimharder_uso').insert({
+          llamadas: f.llamadas, limitadas: f.limitadas, bloqueo_hasta: f.bloqueoHasta !== null ? new Date(f.bloqueoHasta).toISOString() : null,
+        });
+        if (error) throw new Error(error.message);
+      },
+      async quitarBloqueo() {
+        await admin.from('aimharder_uso').update({ bloqueo_hasta: null }).gt('bloqueo_hasta', new Date().toISOString());
+      },
+    };
+
     return manejar(req, {
       fetchFn: fetch,
       almacen,
       pruebas,
+      uso: crearControlUso(almacenUso, () => Date.now()),
       pausa: (ms: number) => new Promise<void>(r => setTimeout(r, ms)),
       reloj: () => Date.now(),
       hoy: () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Madrid' }).format(new Date()),

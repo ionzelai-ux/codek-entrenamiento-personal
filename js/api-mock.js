@@ -68,6 +68,7 @@ const pruebasDemo = [];
 let seqPrueba = 9000;
 export async function consultarAimHarder(cuerpo) {
   if (cuerpo.accion === 'prueba_listar') return { ok: true, pruebas: pruebasDemo.map(p => ({ ...p })) };
+  if (cuerpo.accion === 'uso_reiniciar') return { ok: true, uso: { usadas: 12, limite: 90, bloqueoHasta: null } };
   if (cuerpo.accion === 'prueba_reservar') {
     if (pruebasDemo.filter(p => !p.cancelada).length >= 4) {   // simula el aforo (4) del Rack libre
       return { ok: false, http: 422, error: 'The class is full (demo).', aforo: 4 };
@@ -109,7 +110,7 @@ export async function consultarAimHarder(cuerpo) {
     return { ok: true, canceladas: activas.length, resultados: [], mensaje: `${activas.length} reserva(s) de prueba cancelada(s) (demo).` };
   }
   if (cuerpo.accion === 'estado') {
-    return { ok: true, http: 200, mensaje: 'Conexión correcta con AimHarder (demo)', caducidad: { access: '2026-12-31 10:00:00', refresh: '2027-03-31 10:00:00' } };
+    return { ok: true, http: 200, mensaje: 'Conexión correcta con AimHarder (demo)', uso: { usadas: 12, limite: 90, bloqueoHasta: null }, caducidad: { access: '2026-12-31 10:00:00', refresh: '2027-03-31 10:00:00' } };
   }
   const horas = ['08:00', '09:00', '10:00', '11:00', '12:00', '17:00', '18:00', '19:00'];
   const clases = [
