@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  llamarAimHarder, manejar, extraerClases, ocultarTokens, ErrorAimHarder, reservarPrueba, cancelarPruebas,
+  llamarAimHarder, manejar, extraerClases, ocultarTokens, ErrorAimHarder, reservarPrueba, cancelarPruebas, diagnosticoPruebas,
 } from '../supabase/functions/aimharder-probe/index.ts';
 
 const JWT = (n) => `eyJhbGciOiJIUzI1NiJ9.eyJuIjoi${n}In0.firma${n}`;   // aspecto de token
@@ -316,6 +316,43 @@ test('manejar: reservar, listar y cancelar de extremo a extremo', async () => {
   assert.deepEqual(l.pruebas.map(p => [p.booking_id, p.cancelada]), [[555, null]]);
   const c = await (await manejar(post({ accion: 'prueba_cancelar' }), e.deps)).json();
   assert.equal(c.canceladas, 1);
+});
+
+test('diagnóstico: estado de cada reserva, invitados propios y clase; sin datos de otros invitados ni tokens', async () => {
+  const e = entorno({
+    pruebasIniciales: [{ booking_id: 41, schedule_id: 1402700 }, { booking_id: 42, schedule_id: 1402700 }, { booking_id: 40, schedule_id: 1402700, cancelada: 'ayer' }],
+    respuestas: [
+      json({ data: { id: 41, state: 'confirmed', booked_by: { type: 'api' }, class: { id: 38710, name: 'Rack libre' } } }),
+      json({ data: { id: 42, state: 'waiting_list', cancellation_date: null } }),
+      json({ data: { guests: [
+        { id: 41, name: 'PRUEBA', first_surname: 'PT', email: null, mobile_number: null },
+        { id: 42, name: 'PRUEBA', first_surname: 'PT' },
+        { id: 41, name: 'María', email: 'maria@ejemplo.com', mobile_number: '600111222' },   // otro invitado: jamás debe salir
+      ] } }),
+      json(CAL_11),
+      json([{ id: 38710, name: 'Rack libre', description: 'Entrenamiento libre', cancellation_time: '60 min', secreto: JWT('Z') }]),
+    ],
+  });
+  const d = await diagnosticoPruebas(e.deps);
+  assert.equal(d.ok, true);
+  assert.deepEqual(d.estados.map(x => [x.booking_id, x.estado]), [[41, 'confirmed'], [42, 'waiting_list']], 'ignora la ya cancelada');
+  assert.equal(d.estados[0].hecha_por, 'api');
+  assert.equal(d.invitados.encontrados, 2);
+  assert.deepEqual(d.clase, { nombre: 'Rack libre', aforo: 4, hora: '11:00', schedule_id: 1402700 });
+  assert.match(d.clase_cruda, /cancellation_time/);
+  const texto = JSON.stringify(d);
+  assert.ok(!texto.includes('maria') && !texto.includes('María') && !texto.includes('600111222'), 'no filtra datos de otros invitados');
+  assert.ok(!texto.includes('eyJ'), 'no filtra tokens');
+  assert.equal(e.llamadas[2].url, 'https://api.aimharder.com/guests?id_from=41&id_to=42');
+});
+
+test('diagnóstico: sin reservas de prueba activas no llama a AimHarder; solo el administrador', async () => {
+  const e = entorno({ respuestas: [] });
+  const d = await diagnosticoPruebas(e.deps);
+  assert.equal(d.ok, false);
+  assert.equal(e.llamadas.length, 0);
+  const n = entorno({ admin: false });
+  assert.equal((await manejar(post({ accion: 'prueba_diagnostico' }), n.deps)).status, 403);
 });
 
 test('prueba: los errores nunca incluyen tokens', async () => {

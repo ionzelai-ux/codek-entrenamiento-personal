@@ -37,6 +37,24 @@ function diaHTML() {
       para saber cuántas quedan libres hay que mirar en AimHarder.</p>`;
 }
 
+function diagHTML() {
+  const d = S.ah.diag;
+  if (!d) return '';
+  if (!d.ok) return `<div class="alert alert-danger" style="margin-top:14px">✖ ${esc(d.error || 'No se pudo hacer el diagnóstico')}</div>`;
+  const filas = d.estados.map(x => `<tr><td class="num">${esc(x.booking_id)}</td><td class="num">${esc(x.http)}</td>
+    <td>${x.estado === 'waiting_list' ? '<span class="chip granate">waiting_list</span>' : esc(x.estado ?? '—')}</td><td>${esc(x.hecha_por ?? '—')}</td></tr>`).join('');
+  const inv = d.invitados || {};
+  const bloque = (titulo, txt) => txt ? `<div class="hint" style="margin:12px 0 4px">${titulo}</div><pre class="ah-crudo">${esc(txt)}</pre>` : '';
+  return `
+    <div class="section-title" style="margin-top:22px">Diagnóstico · ${esc(d.activas)} reserva(s) de prueba</div>
+    <div class="tabla-wrap"><table class="tabla"><thead><tr><th class="num">Nº reserva</th><th class="num">HTTP</th><th>Estado en AimHarder</th><th>Hecha por</th></tr></thead><tbody>${filas}</tbody></table></div>
+    <p class="hint" style="margin-top:10px">Clase: ${d.clase ? esc(`${d.clase.nombre} · ${d.clase.hora} · aforo ${d.clase.aforo}`) : '—'} ·
+      Lista de invitados: HTTP ${esc(inv.http ?? '—')}${inv.encontrados != null ? `, ${esc(inv.encontrados)} encontrada(s)` : ''}${inv.forma ? `, campos: ${esc(inv.forma.join(', '))}` : ''}</p>
+    ${bloque('Ficha completa de la primera reserva (sin tokens):', d.reserva_cruda)}
+    ${bloque('Cómo aparece en la lista de invitados:', inv.ejemplo)}
+    ${bloque('Datos de la clase:', d.clase_cruda)}`;
+}
+
 function pruebasHTML() {
   const p = S.ah.prueba;
   const msg = p ? (p.ok
@@ -56,9 +74,11 @@ function pruebasHTML() {
       <input class="form-input" type="date" id="ah-pfecha" value="${esc(S.ah.pfecha)}" style="max-width:190px">
       <input class="form-input" type="time" id="ah-phora" value="${esc(S.ah.phora)}" style="max-width:130px">
       <button class="btn btn-primary btn-sm" data-acc="ah-reservar" ${S.ah.cargando ? 'disabled' : ''}>Reservar 1 plaza de prueba</button>
+      <button class="btn btn-secondary btn-sm" data-acc="ah-diagnostico" ${S.ah.cargando || !activas ? 'disabled' : ''}>Diagnóstico de las activas</button>
       <button class="btn btn-danger btn-sm" data-acc="ah-cancelar" ${S.ah.cargando || !activas ? 'disabled' : ''}>Cancelar todas las pruebas${activas ? ` (${activas})` : ''}</button>
     </div>
     ${msg}
+    ${diagHTML()}
     ${filas ? `<div class="tabla-wrap" style="margin-top:14px"><table class="tabla"><thead><tr><th class="num">Nº reserva</th><th>Clase</th><th>Estado</th></tr></thead><tbody>${filas}</tbody></table></div>` : ''}`;
 }
 
@@ -128,6 +148,12 @@ export const accionesAimHarder = {
     const r = await consultar({ accion: 'prueba_reservar', fecha, hora });
     if (r) S.ah.prueba = r;
     await accionesAimHarder['ah-listar']();
+  },
+  'ah-diagnostico': async () => {
+    S.ah.diag = null;
+    const r = await consultar({ accion: 'prueba_diagnostico' });
+    if (r) S.ah.diag = r;
+    bus.repintar();
   },
   'ah-cancelar': async () => {
     const ok = await dialogo({

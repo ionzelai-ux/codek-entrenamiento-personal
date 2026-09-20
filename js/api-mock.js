@@ -76,6 +76,17 @@ export async function consultarAimHarder(cuerpo) {
     pruebasDemo.push(p);
     return { ok: true, booking_id: p.booking_id, mensaje: `Reserva de prueba creada (nº ${p.booking_id}) en «Rack libre» ${cuerpo.hora} del ${cuerpo.fecha} (demo).` };
   }
+  if (cuerpo.accion === 'prueba_diagnostico') {
+    const activas = pruebasDemo.filter(p => !p.cancelada);
+    if (!activas.length) return { ok: false, error: 'No hay reservas de prueba activas: haz alguna reserva antes de pedir el diagnóstico.' };
+    return {
+      ok: true, activas: activas.length,
+      estados: activas.map((p, i) => ({ booking_id: p.booking_id, http: 200, estado: i >= 4 ? 'waiting_list' : 'confirmed', hecha_por: 'api' })),
+      reserva_cruda: '{"data":{"id":9001,"state":"confirmed","booked_by":{"type":"api"}}}',
+      invitados: { http: 200, encontrados: activas.length, ejemplo: '{"id":9001,"name":"PRUEBA","first_surname":"PT"}' },
+      clase: { nombre: 'Rack libre', aforo: 4, hora: activas[0].hora, schedule_id: 600 }, clase_cruda: '[{"id":38710,"name":"Rack libre","cancellation_time":"60 min"}]',
+    };
+  }
   if (cuerpo.accion === 'prueba_cancelar') {
     const activas = pruebasDemo.filter(p => !p.cancelada);
     activas.forEach(p => { p.cancelada = 'hoy'; });

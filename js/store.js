@@ -15,7 +15,7 @@ export const S = {
   resumenMes: hoyISO().slice(0, 7),
   ah: {                          // panel de AimHarder (solo admin)
     fecha: hoyISO(), estado: null, dia: null, error: '', cargando: false,
-    pfecha: '2026-09-21', phora: '11:00', pruebas: null, pruebasCargadas: false, prueba: null,
+    pfecha: '2026-09-21', phora: '11:00', pruebas: null, pruebasCargadas: false, prueba: null, diag: null,
   },
 };
 

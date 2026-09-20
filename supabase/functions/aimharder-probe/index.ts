@@ -186,6 +186,49 @@ export async function cancelarPruebas(deps: Deps) {
   };
 }
 
+// Diagnóstico: lee (solo lectura) todo lo que AimHarder cuenta de NUESTRAS reservas de prueba activas:
+// estado de cada una, su ficha completa, cómo aparecen en la lista de invitados y los datos de la clase.
+// Sirve para saber si se puede detectar el aforo superado. Nunca devuelve datos de otros invitados.
+export async function diagnosticoPruebas(deps: Deps) {
+  const activas = (await deps.pruebas.listar()).filter(p => !p.cancelada);
+  if (activas.length === 0) return { ok: false, error: 'No hay reservas de prueba activas: haz alguna reserva antes de pedir el diagnóstico.' };
+  const recorte = (x: unknown, n = 2500) => ocultarTokens(JSON.stringify(x)).slice(0, n);
+  const intentar = async <T>(f: () => Promise<T>): Promise<T | null> => { try { return await f(); } catch (_e) { return null; } };
+
+  const estados: any[] = [];
+  let reservaCruda = '';
+  for (const p of activas) {
+    const g = await llamarAimHarder(deps, 'GET', `bookings/${p.booking_id}`);
+    const d = g.json?.data ?? g.json;
+    estados.push({ booking_id: p.booking_id, http: g.estado, estado: d?.state ?? null, cancelacion: d?.cancellation_date ?? null, hecha_por: d?.booked_by?.type ?? null });
+    if (!reservaCruda && g.estado === 200) reservaCruda = recorte(g.json);
+  }
+
+  const ids = activas.map(p => p.booking_id);
+  const gi = await intentar(() => llamarAimHarder(deps, 'GET', `guests?id_from=${Math.min(...ids)}&id_to=${Math.max(...ids)}`));
+  let invitados: any = { http: gi?.estado ?? null };
+  if (gi) {
+    const j = gi.json;
+    const lista = j?.data?.guests ?? j?.guests ?? (Array.isArray(j?.data) ? j.data : (Array.isArray(j) ? j : null));
+    if (Array.isArray(lista)) {
+      const propios = lista.filter((x: any) => ids.includes(Number(x.id)) && String(x.name) === 'PRUEBA');   // solo las nuestras
+      invitados = { http: gi.estado, encontrados: propios.length, ejemplo: propios.length ? recorte(propios[0], 1200) : null };
+    } else {
+      invitados = { http: gi.estado, forma: Object.keys(j ?? {}) };
+    }
+  }
+
+  const ult = activas[activas.length - 1];
+  const cal = await intentar(() => llamarAimHarder(deps, 'GET', `calendar/${ult.fecha}`));
+  const clase = cal ? (extraerClases(cal.json) ?? []).find(c => c.schedule_id === ult.schedule_id) ?? null : null;
+  let claseCruda = '';
+  if (clase?.class_id != null) {
+    const c = await intentar(() => llamarAimHarder(deps, 'GET', `classes/${clase.class_id}`));
+    if (c) claseCruda = recorte(c.json);
+  }
+  return { ok: true, activas: activas.length, estados, reserva_cruda: reservaCruda, invitados, clase: clase ? { nombre: clase.nombre, aforo: clase.aforo, hora: clase.hora, schedule_id: clase.schedule_id } : null, clase_cruda: claseCruda };
+}
+
 export async function manejar(req: Request, deps: Deps): Promise<Response> {
   const responder = (cuerpo: unknown, estado = 200) =>
     new Response(JSON.stringify(cuerpo), { status: estado, headers: { ...CORS, 'Content-Type': 'application/json' } });
@@ -218,6 +261,7 @@ export async function manejar(req: Request, deps: Deps): Promise<Response> {
     if (cuerpo?.accion === 'prueba_reservar') return responder(await reservarPrueba(deps, String(cuerpo.fecha ?? ''), String(cuerpo.hora ?? '')));
     if (cuerpo?.accion === 'prueba_cancelar') return responder(await cancelarPruebas(deps));
     if (cuerpo?.accion === 'prueba_listar') return responder({ ok: true, pruebas: await deps.pruebas.listar() });
+    if (cuerpo?.accion === 'prueba_diagnostico') return responder(await diagnosticoPruebas(deps));
 
     return responder({ error: 'Acción no válida.' }, 400);
   } catch (e: any) {
