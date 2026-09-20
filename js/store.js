@@ -16,6 +16,7 @@ export const S = {
   ah: {                          // panel de AimHarder (solo admin)
     fecha: hoyISO(), estado: null, dia: null, error: '', cargando: false,
     pfecha: '2026-09-21', phora: '11:00', pruebas: null, pruebasCargadas: false, prueba: null, diag: null,
+    ofecha: '2026-09-21', ohora: '08:00', ocup: null, calculando: false,
   },
 };
 

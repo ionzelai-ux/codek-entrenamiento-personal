@@ -22,6 +22,13 @@ const CORS = {
 };
 const MARGEN_MIN = 180;            // la prueba debe ser ≥ 3 h antes de la clase (AimHarder no deja cancelar con < 1 h)
 const MAX_PRUEBAS_ACTIVAS = 6;
+// Cálculo de ocupación (los números de reserva de AimHarder crecen ~310.000 al día en todo el sistema;
+// se usa una cifra mayor y 45 días de margen para no dejarse reservas fuera al acotar el historial).
+const RVID_POR_DIA = 400000;
+const DIAS_ATRAS = 45;
+const PARALELO = 5;                // peticiones simultáneas máximas
+const PRESUPUESTO_MS = 100000;     // tiempo máximo del cálculo (la función se corta a los ~150 s)
+const MAX_PAGINAS = 40;
 
 export interface Tokens { access: string; refresh: string }
 export interface Caducidad { access: string | null; refresh: string | null }
@@ -43,6 +50,8 @@ export interface Deps {
   fetchFn: typeof fetch;
   hoy(): string;
   ahoraMadrid(): string;           // 'AAAA-MM-DD HH:MM' en hora de Madrid
+  pausa(ms: number): Promise<void>;
+  reloj(): number;                 // milisegundos (para medir el tiempo del cálculo)
 }
 interface Respuesta { estado: number; json: any }
 
@@ -84,12 +93,25 @@ async function renovar(deps: Deps, t: Tokens): Promise<Tokens> {
   return nuevo;
 }
 
+// Si varias peticiones simultáneas se encuentran el token caducado, solo una debe renovarlo:
+// la pareja anterior queda invalidada y renovar dos veces rompería la segunda.
+const renovaciones = new WeakMap<object, Promise<Tokens>>();
+function renovarUnaVez(deps: Deps, t: Tokens): Promise<Tokens> {
+  let p = renovaciones.get(deps);
+  if (!p) {
+    p = renovar(deps, t).finally(() => { renovaciones.delete(deps); });
+    renovaciones.set(deps, p);
+  }
+  return p;
+}
+
 export async function llamarAimHarder(deps: Deps, metodo: string, ruta: string, cuerpo?: unknown): Promise<Respuesta> {
   let t = await deps.almacen.leer();
   if (!t) throw new ErrorAimHarder('Faltan los tokens: crea los secretos AIMHARDER_ACCESS_TOKEN y AIMHARDER_REFRESH_TOKEN en Supabase (Edge Functions → Secrets).', 500);
   let r = await pedir(deps.fetchFn, metodo, ruta, t.access, cuerpo);
   if (caducado(r)) {                        // token de acceso caducado: se renueva una vez y se reintenta
-    t = await renovar(deps, t);
+    const actual = await deps.almacen.leer();
+    t = actual && actual.access !== t.access ? actual : await renovarUnaVez(deps, t);   // otro ya lo renovó → usar el nuevo
     r = await pedir(deps.fetchFn, metodo, ruta, t.access, cuerpo);
   }
   return r;
@@ -229,6 +251,122 @@ export async function diagnosticoPruebas(deps: Deps) {
   return { ok: true, activas: activas.length, estados, reserva_cruda: reservaCruda, invitados, clase: clase ? { nombre: clase.nombre, aforo: clase.aforo, hora: clase.hora, schedule_id: clase.schedule_id } : null, clase_cruda: claseCruda };
 }
 
+// ── Ocupación de un Rack libre (solo lectura) ──────────────────────────────
+// La API no dice cuántas plazas hay ocupadas, así que se calcula: se suman las reservas confirmadas
+// de todos los socios (su historial, acotado por número de reserva) más las de invitado que conocemos.
+// Se devuelven solo recuentos y números de reserva: nunca nombres, emails ni teléfonos.
+function extraerLista(json: any, claves: string[]): any[] | null {
+  const d = json?.data;
+  if (Array.isArray(d)) return d;
+  for (const k of claves) {
+    if (Array.isArray(d?.[k])) return d[k];
+    if (Array.isArray(json?.[k])) return json[k];
+  }
+  return Array.isArray(json) ? json : null;
+}
+const siguienteCursor = (json: any): string | null => json?.pagination?.nextCursor ?? json?.data?.pagination?.nextCursor ?? null;
+
+interface Contadores { solicitudes: number; reintentos: number }
+
+async function pedirConReintento(deps: Deps, c: Contadores, ruta: string): Promise<Respuesta> {
+  for (let intento = 0; ; intento++) {
+    c.solicitudes++;
+    const r = await llamarAimHarder(deps, 'GET', ruta);
+    if (r.estado !== 429 || intento >= 3) return r;         // 429 = demasiadas peticiones: esperar y reintentar
+    c.reintentos++;
+    await deps.pausa(1000 * (intento + 1));
+  }
+}
+
+async function paginar(deps: Deps, c: Contadores, rutaBase: string, claves: string[], vencido: () => boolean) {
+  const items: any[] = [];
+  let cursor: string | null = null;
+  let paginas = 0;
+  do {
+    const ruta: string = cursor ? `${rutaBase}${rutaBase.includes('?') ? '&' : '?'}cursor=${encodeURIComponent(cursor)}` : rutaBase;
+    const r = await pedirConReintento(deps, c, ruta);
+    if (r.estado !== 200) return { items, error: `HTTP ${r.estado}: ${mensajeApi(r)}`, forma: null as string[] | null };
+    const lista = extraerLista(r.json, claves);
+    if (!lista) return { items, error: 'formato inesperado', forma: Object.keys(r.json ?? {}) };
+    items.push(...lista);
+    cursor = siguienteCursor(r.json);
+    paginas++;
+  } while (cursor && paginas < MAX_PAGINAS && !vencido());
+  return { items, error: null as string | null, forma: null as string[] | null };
+}
+
+async function enParalelo<T>(items: T[], n: number, f: (x: T) => Promise<void>, vencido: () => boolean): Promise<void> {
+  let i = 0;
+  const trabajador = async () => { while (i < items.length && !vencido()) { const x = items[i++]; await f(x); } };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, trabajador));
+}
+
+export async function calcularOcupacion(deps: Deps, fecha: string, hora: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !/^\d{2}:\d{2}$/.test(hora)) return { ok: false, error: 'Indica la fecha (AAAA-MM-DD) y la hora (HH:MM).' };
+  const inicio = deps.reloj();
+  const vencido = () => deps.reloj() - inicio > PRESUPUESTO_MS;
+  const c: Contadores = { solicitudes: 0, reintentos: 0 };
+
+  // 1) La clase «Rack libre» de esa hora (además deja el token renovado antes de lanzar peticiones simultáneas)
+  const cal = await pedirConReintento(deps, c, `calendar/${fecha}`);
+  if (cal.estado !== 200) return { ok: false, http: cal.estado, error: mensajeApi(cal) };
+  const candidatas = (extraerClases(cal.json) ?? []).filter(x => x.es_rack && x.hora === hora && !x.cancelada);
+  if (candidatas.length === 0) return { ok: false, error: `No hay ninguna clase «Rack libre» a las ${hora} el ${fecha}.` };
+  if (candidatas.length > 1) return { ok: false, error: `Hay ${candidatas.length} clases «Rack libre» a las ${hora}; no sé cuál usar.` };
+  const clase = candidatas[0];
+
+  // 2) Número de reserva de referencia (las nuestras): sirve para no leer todo el historial de cada socio
+  const propias = await deps.pruebas.listar();
+  const ancla = propias.reduce((m, p) => Math.max(m, p.booking_id), 0);
+  if (!ancla) return { ok: false, error: 'Necesito una reserva de referencia para acotar la búsqueda: haz antes una reserva de prueba (puedes cancelarla después).' };
+  const desde = Math.max(0, ancla - DIAS_ATRAS * RVID_POR_DIA);
+
+  // 3) Socios
+  const cl = await paginar(deps, c, 'clients', ['clients'], vencido);
+  if (cl.error) return { ok: false, error: `No se pudo leer la lista de socios (${cl.error}).`, forma: cl.forma };
+  const idDe = (x: any) => x?.id ?? x?.Id ?? x?.client_id;
+  const ids: number[] = cl.items.filter((x: any) => !x?.deactivation_date && idDe(x) != null).map((x: any) => Number(idDe(x)));
+
+  // 4) Historial de cada socio: reservas confirmadas de ESA clase, día y hora
+  const encontrados: number[] = [];
+  const incidencias: string[] = [];
+  let revisados = 0, enEspera = 0;
+  let campos: string[] | null = null;
+  await enParalelo(ids, PARALELO, async (id) => {
+    const h = await paginar(deps, c, `clients/${id}/booking-history?id_from=${desde}`, ['bookings', 'history'], vencido);
+    if (h.error) { if (incidencias.length < 5) incidencias.push(`socio ${id}: ${h.error}`); return; }
+    revisados++;
+    for (const b of h.items) {
+      if (!campos && b && typeof b === 'object') campos = Object.keys(b);
+      const coincide = b?.day === fecha && String(b?.time ?? '').slice(0, 5) === hora && Number(b?.class?.id) === Number(clase.class_id) && !b?.cancellation_date;
+      if (!coincide) continue;
+      if (b?.state === 'waiting_list') enEspera++; else encontrados.push(Number(b?.id));
+    }
+  }, vencido);
+
+  // 5) Invitados: los nuestros (los conocemos) y, si se puede, los que hayan apuntado otros
+  const nuestros = new Set(propias.map(p => p.booking_id));
+  const invitadosPropios = propias.filter(p => !p.cancelada && p.fecha === fecha && p.hora === hora).length;
+  let invitadosOtros: number | null = null;
+  const gi = await paginar(deps, c, `guests?id_from=${desde}`, ['guests'], vencido);
+  if (!gi.error) {
+    invitadosOtros = gi.items.filter((g: any) =>
+      g?.booking_day === fecha && String(g?.booking_time ?? '').slice(0, 5) === hora && /rack/i.test(String(g?.activity ?? ''))
+      && !g?.cancellation_date && !nuestros.has(Number(g?.id)) && !['PT', 'PRUEBA'].includes(String(g?.name ?? ''))).length;
+  }
+
+  const socios = encontrados.length;
+  const total = socios + invitadosPropios + (invitadosOtros ?? 0);
+  const completo = !vencido() && incidencias.length === 0 && revisados === ids.length;
+  return {
+    ok: true, fecha, hora, aforo: clase.aforo, socios, invitados_propios: invitadosPropios, invitados_otros: invitadosOtros,
+    en_espera: enEspera, total, libres: (clase.aforo ?? 0) - total, completo,
+    socios_total: ids.length, socios_revisados: revisados, solicitudes: c.solicitudes, reintentos_429: c.reintentos,
+    segundos: Math.round((deps.reloj() - inicio) / 100) / 10, ancla, desde, campos_historial: campos, incidencias,
+    reservas_socios: encontrados,
+  };
+}
+
 export async function manejar(req: Request, deps: Deps): Promise<Response> {
   const responder = (cuerpo: unknown, estado = 200) =>
     new Response(JSON.stringify(cuerpo), { status: estado, headers: { ...CORS, 'Content-Type': 'application/json' } });
@@ -262,6 +400,7 @@ export async function manejar(req: Request, deps: Deps): Promise<Response> {
     if (cuerpo?.accion === 'prueba_cancelar') return responder(await cancelarPruebas(deps));
     if (cuerpo?.accion === 'prueba_listar') return responder({ ok: true, pruebas: await deps.pruebas.listar() });
     if (cuerpo?.accion === 'prueba_diagnostico') return responder(await diagnosticoPruebas(deps));
+    if (cuerpo?.accion === 'ocupacion') return responder(await calcularOcupacion(deps, String(cuerpo.fecha ?? ''), String(cuerpo.hora ?? '')));
 
     return responder({ error: 'Acción no válida.' }, 400);
   } catch (e: any) {
@@ -318,6 +457,8 @@ if (typeof Deno !== 'undefined') {
       fetchFn: fetch,
       almacen,
       pruebas,
+      pausa: (ms: number) => new Promise<void>(r => setTimeout(r, ms)),
+      reloj: () => Date.now(),
       hoy: () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Madrid' }).format(new Date()),
       ahoraMadrid: () => new Intl.DateTimeFormat('sv-SE', {
         timeZone: 'Europe/Madrid', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',

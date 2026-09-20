@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   llamarAimHarder, manejar, extraerClases, ocultarTokens, ErrorAimHarder, reservarPrueba, cancelarPruebas, diagnosticoPruebas,
+  calcularOcupacion,
 } from '../supabase/functions/aimharder-probe/index.ts';
 
 const JWT = (n) => `eyJhbGciOiJIUzI1NiJ9.eyJuIjoi${n}In0.firma${n}`;   // aspecto de token
@@ -9,15 +10,18 @@ const json = (cuerpo, estado = 200) => new Response(JSON.stringify(cuerpo), { st
 
 // Almacén en memoria + API simulada que registra cada llamada
 function entorno({ tokens = { access: JWT('A1'), refresh: JWT('R1') }, respuestas = [], falloGuardar = false, admin = true,
-  ahora = '2026-09-20 18:00', pruebasIniciales = [], falloRegistrar = false } = {}) {
+  ahora = '2026-09-20 18:00', pruebasIniciales = [], falloRegistrar = false, enrutador = null, msPorLlamadaReloj = 0 } = {}) {
   const llamadas = [];
   let guardado = null;
   const cola = [...respuestas];
   const pruebas = pruebasIniciales.map(p => ({ schedule_id: 1, fecha: '2026-09-21', hora: '11:00', cancelada: null, ...p }));
+  let relojMs = 0;
   const deps = {
     esAdmin: async () => admin,
     hoy: () => '2026-09-21',
     ahoraMadrid: () => ahora,
+    pausa: async () => {},
+    reloj: () => { relojMs += msPorLlamadaReloj; return relojMs; },
     pruebas: {
       registrar: async p => { if (falloRegistrar) throw new Error('sin tabla'); pruebas.push({ ...p, cancelada: null }); },
       listar: async () => pruebas.map(p => ({ ...p })),
@@ -25,6 +29,7 @@ function entorno({ tokens = { access: JWT('A1'), refresh: JWT('R1') }, respuesta
     },
     fetchFn: async (url, init) => {
       llamadas.push({ url: String(url), auth: init?.headers?.Authorization, metodo: init?.method, cuerpo: init?.body ? JSON.parse(init.body) : undefined });
+      if (enrutador) return enrutador(String(url).replace('https://api.aimharder.com/', ''), llamadas.length);
       const sig = cola.shift();
       if (!sig) throw new Error('llamada inesperada a ' + url);
       return sig;
@@ -353,6 +358,171 @@ test('diagnóstico: sin reservas de prueba activas no llama a AimHarder; solo el
   assert.equal(e.llamadas.length, 0);
   const n = entorno({ admin: false });
   assert.equal((await manejar(post({ accion: 'prueba_diagnostico' }), n.deps)).status, 403);
+});
+
+// ── Cálculo de ocupación ──────────────────────────────────────────────────
+const RACK = 38710;
+const CAL_RACK = { data: [
+  { schedule_id: 1156163, time: '11:00', name: 'Rack libre', duration: 60, limit: 4, cancelled: false, class_id: RACK },
+  { schedule_id: 1156164, time: '12:00', name: 'Rack libre', duration: 60, limit: 4, cancelled: false, class_id: RACK },
+] };
+const reserva = (id, extra = {}) => ({ id, day: '2026-09-21', time: '11:00', class: { id: RACK, name: 'Rack libre' }, state: 'confirmed', cancellation_date: null, ...extra });
+const pagina = (items, siguiente = null) => json({ data: items, pagination: { nextCursor: siguiente }, info: { version: '1.0' } });
+
+// API simulada: responde según la dirección. `socios` = { idSocio: [páginas de reservas] }
+function apiSocios({ socios, listaClientes, guests = [], calendario = CAL_RACK, fallos = {} }) {
+  const vistos429 = new Set();
+  return (ruta) => {
+    if (ruta.startsWith('calendar/')) return json(calendario);
+    if (ruta === 'clients') return pagina(listaClientes.slice(0, 2), listaClientes.length > 2 ? 'c2' : null);
+    if (ruta.startsWith('clients?cursor=c2')) return pagina(listaClientes.slice(2));
+    let m = ruta.match(/^clients\/(\d+)\/booking-history\?id_from=(\d+)(?:&cursor=(\w+))?$/);
+    if (m) {
+      const [, id, , cursor] = m;
+      if (fallos[id] === 429 && !vistos429.has(id)) { vistos429.add(id); return json({ error: { message: 'Too Many Requests' } }, 429); }
+      if (fallos[id] === 500) return json({ error: { message: 'boom' } }, 500);
+      const paginas = socios[id] ?? [[]];
+      const n = cursor ? Number(cursor.replace('p', '')) : 0;
+      return pagina(paginas[n], n + 1 < paginas.length ? `p${n + 1}` : null);
+    }
+    if (ruta.startsWith('guests')) return pagina(guests);
+    throw new Error('ruta inesperada: ' + ruta);
+  };
+}
+const clientes = [
+  { id: 1, name: 'Ana Secreta', email: 'ana@ejemplo.com', mobile_number: '600111222' }, { id: 2, name: 'Beto Privado', email: 'beto@ejemplo.com' },
+  { id: 3, name: 'Carla Baja', deactivation_date: '2026-01-01' }, { id: 4, name: 'Dani Reservado' },
+];
+
+test('ocupación: suma socios confirmados (solo esa clase, día y hora), cuenta nuestros invitados y calcula plazas libres', async () => {
+  const e = entorno({
+    pruebasIniciales: [{ booking_id: 143035051, fecha: '2026-09-21', hora: '11:00' }, { booking_id: 143035052, fecha: '2026-09-21', hora: '11:00', cancelada: 'ayer' }, { booking_id: 143035053, fecha: '2026-10-05', hora: '11:00' }],
+    enrutador: apiSocios({
+      listaClientes: clientes,
+      socios: {
+        1: [[reserva(1), reserva(2, { day: '2026-09-22' }), reserva(3, { time: '12:00' })], [reserva(4, { class: { id: 999 } })]],   // 2 páginas: solo cuenta la 1
+        2: [[reserva(5), reserva(6, { state: 'waiting_list' }), reserva(7, { cancellation_date: '2026-09-20 10:00:00' })]],          // confirmada + en espera + cancelada
+        4: [[]],
+      },
+    }),
+  });
+  const r = await calcularOcupacion(e.deps, '2026-09-21', '11:00');
+  assert.equal(r.ok, true);
+  assert.equal(r.socios, 2, 'reservas 1 y 5; ni otro día/hora/clase, ni en espera, ni canceladas');
+  assert.deepEqual(r.reservas_socios.sort(), [1, 5]);
+  assert.equal(r.en_espera, 1);
+  assert.equal(r.invitados_propios, 1, 'solo la nuestra activa de ese día y hora');
+  assert.equal(r.total, 3);
+  assert.equal(r.libres, 1);
+  assert.equal(r.aforo, 4);
+  assert.equal(r.socios_total, 3, 'el socio dado de baja no se consulta');
+  assert.equal(r.socios_revisados, 3);
+  assert.equal(r.completo, true);
+  assert.equal(r.desde, 143035053 - 45 * 400000);
+});
+
+test('ocupación: acota el historial con id_from y pide las páginas siguientes de los socios', async () => {
+  const e = entorno({
+    pruebasIniciales: [{ booking_id: 150000000 }],
+    enrutador: apiSocios({ listaClientes: clientes.slice(0, 1), socios: { 1: [[reserva(1)], [reserva(2)]] } }),
+  });
+  await calcularOcupacion(e.deps, '2026-09-21', '11:00');
+  const urls = e.llamadas.map(l => l.url.replace('https://api.aimharder.com/', ''));
+  assert.ok(urls.includes(`clients/1/booking-history?id_from=${150000000 - 18000000}`));
+  assert.ok(urls.includes(`clients/1/booking-history?id_from=${150000000 - 18000000}&cursor=p1`));
+  assert.ok(urls.includes('clients?cursor=c2') === false, 'con un solo socio no hay segunda página de la lista');
+});
+
+test('ocupación: pagina la lista de socios y cuenta invitados de otros (no los «PT»/«PRUEBA»)', async () => {
+  const e = entorno({
+    pruebasIniciales: [{ booking_id: 143000000 }],
+    enrutador: apiSocios({
+      listaClientes: clientes, socios: {},
+      guests: [
+        { id: 900, booking_day: '2026-09-21', booking_time: '11:00:00', activity: 'Rack libre', name: 'Visita', cancellation_date: null },
+        { id: 901, booking_day: '2026-09-21', booking_time: '11:00:00', activity: 'Rack libre', name: 'PT', cancellation_date: null },       // nuestro
+        { id: 902, booking_day: '2026-09-21', booking_time: '11:00:00', activity: 'Rack libre', name: 'Otra', cancellation_date: '2026-09-20' }, // cancelada
+        { id: 903, booking_day: '2026-09-21', booking_time: '11:00:00', activity: 'Entreno personal', name: 'Entreno' },                        // otra clase
+      ],
+    }),
+  });
+  const r = await calcularOcupacion(e.deps, '2026-09-21', '11:00');
+  assert.equal(r.socios_total, 3);
+  assert.equal(r.invitados_otros, 1);
+  assert.equal(r.invitados_propios, 1, 'la reserva de referencia también es nuestra y cae ese día y hora');
+  assert.equal(r.total, 2);
+});
+
+test('ocupación: reintenta los 429 (demasiadas peticiones) y avisa de los socios que no se pudieron leer', async () => {
+  const e = entorno({
+    pruebasIniciales: [{ booking_id: 143000000 }],
+    enrutador: apiSocios({
+      listaClientes: clientes, socios: { 1: [[reserva(1)]], 2: [[reserva(2)]], 4: [[reserva(3)]] }, fallos: { 1: 429, 4: 500 },
+    }),
+  });
+  const r = await calcularOcupacion(e.deps, '2026-09-21', '11:00');
+  assert.equal(r.reintentos_429, 1);
+  assert.equal(r.socios, 2, 'el 429 se reintenta y cuenta; el 500 no');
+  assert.equal(r.completo, false, 'hay un socio sin revisar → el resultado no es fiable');
+  assert.match(r.incidencias[0], /socio 4/);
+});
+
+test('ocupación: si se agota el tiempo devuelve lo que tiene marcado como incompleto', async () => {
+  const e = entorno({
+    msPorLlamadaReloj: 30000,
+    pruebasIniciales: [{ booking_id: 143000000 }],
+    enrutador: apiSocios({ listaClientes: clientes, socios: { 1: [[reserva(1)]], 2: [[reserva(2)]], 4: [[reserva(3)]] } }),
+  });
+  const r = await calcularOcupacion(e.deps, '2026-09-21', '11:00');
+  assert.equal(r.ok, true);
+  assert.equal(r.completo, false);
+});
+
+test('ocupación: sin reserva de referencia, sin Rack libre a esa hora o con lista de socios inesperada', async () => {
+  const sin = entorno({ enrutador: apiSocios({ listaClientes: clientes, socios: {} }) });
+  assert.match((await calcularOcupacion(sin.deps, '2026-09-21', '11:00')).error, /reserva de referencia/);
+  const otra = entorno({ pruebasIniciales: [{ booking_id: 1 }], enrutador: apiSocios({ listaClientes: clientes, socios: {} }) });
+  assert.match((await calcularOcupacion(otra.deps, '2026-09-21', '15:00')).error, /No hay ninguna clase «Rack libre»/);
+  const rara = entorno({ pruebasIniciales: [{ booking_id: 1 }], enrutador: (ruta) => (ruta.startsWith('calendar/') ? json(CAL_RACK) : json({ algo: 1 })) });
+  const r = await calcularOcupacion(rara.deps, '2026-09-21', '11:00');
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.forma, ['algo']);
+  assert.equal((await calcularOcupacion(sin.deps, 'ayer', '11:00')).ok, false);
+});
+
+test('ocupación: la respuesta nunca contiene nombres, emails, teléfonos ni tokens; solo el administrador', async () => {
+  const e = entorno({
+    pruebasIniciales: [{ booking_id: 143000000 }],
+    enrutador: apiSocios({ listaClientes: clientes, socios: { 1: [[reserva(1)]] } }),
+  });
+  const texto = await (await manejar(post({ accion: 'ocupacion', fecha: '2026-09-21', hora: '11:00' }), e.deps)).text();
+  for (const secreto of ['Ana Secreta', 'ana@ejemplo.com', '600111222', 'Beto', 'eyJ']) assert.ok(!texto.includes(secreto), secreto);
+  assert.match(texto, /"socios":1/);
+  const n = entorno({ admin: false });
+  assert.equal((await manejar(post({ accion: 'ocupacion', fecha: '2026-09-21', hora: '11:00' }), n.deps)).status, 403);
+  assert.equal(n.llamadas.length, 0);
+});
+
+test('renovación con peticiones simultáneas: solo una renueva y las demás usan el token nuevo', async () => {
+  let renovaciones = 0;
+  const e = entorno({
+    enrutador: (ruta, n) => {
+      if (ruta === 'auth/tokens/refresh') { renovaciones++; return json({ 'access-token': JWT('A2'), 'refresh-token': JWT('R2') }); }
+      // Todo lo que llega con el token viejo se rechaza por caducado; con el nuevo funciona
+      return json({ data: [] });
+    },
+  });
+  const original = e.deps.fetchFn;
+  e.deps.fetchFn = async (url, init) => {
+    if (!String(url).endsWith('auth/tokens/refresh') && init.headers.Authorization === `Bearer ${JWT('A1')}`) {
+      e.llamadas.push({ url: String(url), auth: init.headers.Authorization });
+      return json({ error: { message: 'expired' } }, 401);
+    }
+    return original(url, init);
+  };
+  const resultados = await Promise.all([1, 2, 3, 4].map(i => llamarAimHarder(e.deps, 'GET', `x/${i}`)));
+  assert.ok(resultados.every(r => r.estado === 200));
+  assert.equal(renovaciones, 1, 'una sola renovación aunque cuatro peticiones vieran el token caducado');
 });
 
 test('prueba: los errores nunca incluyen tokens', async () => {

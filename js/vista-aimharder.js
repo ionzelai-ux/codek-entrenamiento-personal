@@ -55,6 +55,38 @@ function diagHTML() {
     ${bloque('Datos de la clase:', d.clase_cruda)}`;
 }
 
+function ocupacionHTML() {
+  const o = S.ah.ocup;
+  const a = S.ah;
+  let res = '';
+  if (a.calculando) res = '<div class="alert alert-info" style="margin-top:14px">⏳ Calculando… lee las reservas de todos los socios, puede tardar 1-2 minutos. No cierres la pantalla.</div>';
+  else if (o && !o.ok) res = `<div class="alert alert-danger" style="margin-top:14px">✖ ${esc(o.error || 'Error')}${o.forma ? `<br><small>Campos recibidos: ${esc(o.forma.join(', '))}</small>` : ''}</div>`;
+  else if (o) {
+    const celda = (n, t, cl = '') => `<div class="kpi"><div class="kpi-n ${cl}">${esc(n)}</div><div class="kpi-l">${t}</div></div>`;
+    res = `
+      <div class="kpis" style="margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">
+        ${celda(o.aforo, 'Aforo')}${celda(o.socios, 'Socios')}${celda(o.invitados_propios, 'Invitados PT / prueba')}
+        ${celda(o.invitados_otros ?? '?', 'Otros invitados')}${celda(`${o.total}/${o.aforo}`, 'Ocupadas', o.total >= o.aforo ? 'amarillo' : '')}
+        ${celda(o.libres, 'Libres', o.libres > 0 ? 'verde' : 'amarillo')}
+      </div>
+      <div class="alert ${o.completo ? 'alert-ok' : 'alert-warn'}">${o.completo ? '✔ Cálculo completo' : '⚠ Cálculo INCOMPLETO: no te fíes de este número'} ·
+        socios revisados ${esc(o.socios_revisados)}/${esc(o.socios_total)} · ${esc(o.solicitudes)} peticiones · ${esc(o.segundos)} s${o.reintentos_429 ? ` · ${esc(o.reintentos_429)} reintentos por límite de uso` : ''}</div>
+      ${o.en_espera ? `<div class="hint">Además hay ${esc(o.en_espera)} reserva(s) en lista de espera (no cuentan).</div>` : ''}
+      ${(o.incidencias || []).length ? `<div class="hint">Incidencias: ${esc(o.incidencias.join(' · '))}</div>` : ''}
+      <div class="hint" style="margin-top:6px">Compara con AimHarder (Reservas → esa clase → «Plazas ocupadas»). Referencia usada: reserva nº ${esc(o.ancla)} · historial desde el nº ${esc(o.desde)}${o.campos_historial ? ` · campos del historial: ${esc(o.campos_historial.join(', '))}` : ''}.</div>`;
+  }
+  return `
+    <div class="section-title" style="margin-top:34px">Ocupación del Rack libre (solo lectura)</div>
+    <p class="hint" style="margin-bottom:12px">La API no da las plazas ocupadas, así que se <b>calculan</b>: reservas confirmadas de todos los socios en esa clase, día y hora,
+      más las de invitado. Necesita haber al menos una reserva de prueba hecha antes (sirve de referencia).</p>
+    <div class="ah-fila">
+      <input class="form-input" type="date" id="ah-ofecha" value="${esc(a.ofecha)}" style="max-width:190px">
+      <input class="form-input" type="time" id="ah-ohora" value="${esc(a.ohora)}" style="max-width:130px">
+      <button class="btn btn-primary btn-sm" data-acc="ah-ocupacion" ${a.cargando || a.calculando ? 'disabled' : ''}>Calcular ocupación</button>
+    </div>
+    ${res}`;
+}
+
 function pruebasHTML() {
   const p = S.ah.prueba;
   const msg = p ? (p.ok
@@ -100,6 +132,7 @@ export function renderAimHarder(el) {
       </div>
       ${a.error ? `<div class="alert alert-danger" style="margin-top:14px">✖ ${esc(a.error)}</div>` : ''}
       ${diaHTML()}
+      ${ocupacionHTML()}
       ${pruebasHTML()}
     </div>`;
   if (a.pruebas === null && !a.pruebasCargadas) { a.pruebasCargadas = true; accionesAimHarder['ah-listar'](); }
@@ -148,6 +181,17 @@ export const accionesAimHarder = {
     const r = await consultar({ accion: 'prueba_reservar', fecha, hora });
     if (r) S.ah.prueba = r;
     await accionesAimHarder['ah-listar']();
+  },
+  'ah-ocupacion': async () => {
+    const fecha = document.getElementById('ah-ofecha')?.value, hora = document.getElementById('ah-ohora')?.value;
+    S.ah.ofecha = fecha || S.ah.ofecha; S.ah.ohora = hora || S.ah.ohora;
+    if (!fecha || !hora) { S.ah.ocup = { ok: false, error: 'Indica el día y la hora.' }; bus.repintar(); return; }
+    S.ah.ocup = null; S.ah.calculando = true;
+    bus.repintar();
+    try { S.ah.ocup = await S.api.consultarAimHarder({ accion: 'ocupacion', fecha, hora }); }
+    catch (err) { S.ah.ocup = { ok: false, error: err.message }; }
+    finally { S.ah.calculando = false; }
+    bus.repintar();
   },
   'ah-diagnostico': async () => {
     S.ah.diag = null;

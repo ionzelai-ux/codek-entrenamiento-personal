@@ -76,6 +76,15 @@ export async function consultarAimHarder(cuerpo) {
     pruebasDemo.push(p);
     return { ok: true, booking_id: p.booking_id, mensaje: `Reserva de prueba creada (nº ${p.booking_id}) en «Rack libre» ${cuerpo.hora} del ${cuerpo.fecha} (demo).` };
   }
+  if (cuerpo.accion === 'ocupacion') {
+    const propios = pruebasDemo.filter(p => !p.cancelada && p.fecha === cuerpo.fecha && p.hora === cuerpo.hora).length;
+    const socios = 1, total = socios + propios;
+    return {
+      ok: true, fecha: cuerpo.fecha, hora: cuerpo.hora, aforo: 4, socios, invitados_propios: propios, invitados_otros: 0, en_espera: 0,
+      total, libres: 4 - total, completo: true, socios_total: 180, socios_revisados: 180, solicitudes: 182, reintentos_429: 0, segundos: 41.2,
+      ancla: 143035273, desde: 125035273, campos_historial: ['id', 'day', 'time', 'class', 'state', 'cancellation_date'], incidencias: [], reservas_socios: [1],
+    };
+  }
   if (cuerpo.accion === 'prueba_diagnostico') {
     const activas = pruebasDemo.filter(p => !p.cancelada);
     if (!activas.length) return { ok: false, error: 'No hay reservas de prueba activas: haz alguna reserva antes de pedir el diagnóstico.' };

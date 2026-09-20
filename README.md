@@ -58,6 +58,12 @@ p. ej. «PT Eduardo»). API oficial: https://aimharder.com/api_doc/aimharder/ind
 Necesita `sql/05_aimharder_pruebas.sql` (apunta cada reserva creada: la función solo puede cancelar esas, máx. 6 activas,
 mínimo 3 h de margen antes de la clase).
 
+**Ocupación del rack (solo lectura)**: la API no informa de las plazas ocupadas y los invitados pueden superar el aforo
+(comprobado: 5/4, todas `confirmed`; y se pueden reservar invitados a 15+ días vista). Por eso la ocupación se **calcula**:
+reservas confirmadas de todos los socios en esa clase/día/hora (`clients` + `clients/:id/booking-history?id_from=…`, acotado
+por número de reserva) + invitados (los propios y, si la lista lo permite, los de otros). Solo devuelve recuentos y números
+de reserva (nunca nombres/emails/teléfonos). Sirve para avisar cuando una sesión de última hora no tiene rack libre.
+
 Notas de la API: el calendario (`GET calendar/AAAA-MM-DD`) devuelve `{ data: [...] }` con `schedule_id`, hora, nombre y aforo,
 pero **no las plazas ocupadas**. Reservar: `POST classes/booking/guest` (`schedule_id` + `booking_date`) → devuelve el id de
 reserva; cancelar: `POST classes/booking/cancel` (`booking_id`; no admite cancelar con menos de 1 h).
