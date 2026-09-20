@@ -64,7 +64,23 @@ export async function perfilActual() {
 export async function cerrarSesion() { actual = null; sessionStorage.removeItem('demo_user'); }
 
 // Simulación de la función de AimHarder (modo demo): un día tipo con clases y racks de 4 plazas.
+const pruebasDemo = [];
+let seqPrueba = 9000;
 export async function consultarAimHarder(cuerpo) {
+  if (cuerpo.accion === 'prueba_listar') return { ok: true, pruebas: pruebasDemo.map(p => ({ ...p })) };
+  if (cuerpo.accion === 'prueba_reservar') {
+    if (pruebasDemo.filter(p => !p.cancelada).length >= 4) {   // simula el aforo (4) del Rack libre
+      return { ok: false, http: 422, error: 'The class is full (demo).', aforo: 4 };
+    }
+    const p = { booking_id: ++seqPrueba, fecha: cuerpo.fecha, hora: cuerpo.hora, schedule_id: 600, cancelada: null };
+    pruebasDemo.push(p);
+    return { ok: true, booking_id: p.booking_id, mensaje: `Reserva de prueba creada (nº ${p.booking_id}) en «Rack libre» ${cuerpo.hora} del ${cuerpo.fecha} (demo).` };
+  }
+  if (cuerpo.accion === 'prueba_cancelar') {
+    const activas = pruebasDemo.filter(p => !p.cancelada);
+    activas.forEach(p => { p.cancelada = 'hoy'; });
+    return { ok: true, canceladas: activas.length, resultados: [], mensaje: `${activas.length} reserva(s) de prueba cancelada(s) (demo).` };
+  }
   if (cuerpo.accion === 'estado') {
     return { ok: true, http: 200, mensaje: 'Conexión correcta con AimHarder (demo)', caducidad: { access: '2026-12-31 10:00:00', refresh: '2027-03-31 10:00:00' } };
   }

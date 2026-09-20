@@ -13,7 +13,10 @@ export const S = {
   cal: { modo: 'semana', fecha: hoyISO(), sesiones: [] },
   cli: { estado: 'todos', origen: 'todos', texto: '', archivados: false, pendientes: false },
   resumenMes: hoyISO().slice(0, 7),
-  ah: { fecha: hoyISO(), estado: null, dia: null, error: '', cargando: false },   // panel de AimHarder (solo admin)
+  ah: {                          // panel de AimHarder (solo admin)
+    fecha: hoyISO(), estado: null, dia: null, error: '', cargando: false,
+    pfecha: '2026-09-21', phora: '11:00', pruebas: null, pruebasCargadas: false, prueba: null,
+  },
 };
 
 export const bus = {

@@ -53,6 +53,15 @@ p. ej. «PT Eduardo»). API oficial: https://aimharder.com/api_doc/aimharder/ind
 2. `sql/04_aimharder_tokens.sql` (tabla privada donde la función guarda los tokens renovados).
 3. Desplegar `supabase/functions/aimharder-probe/index.ts` con el nombre `aimharder-probe` (Verify JWT activado).
 
+**Fase 2 (prueba de escritura)** — misma pestaña, sección «Prueba de reservas»: crea plazas de invitado «PRUEBA PT» en el
+«Rack libre» de un día/hora y las cancela, para comprobar si AimHarder las cuenta como ocupadas y si respeta el aforo.
+Necesita `sql/05_aimharder_pruebas.sql` (apunta cada reserva creada: la función solo puede cancelar esas, máx. 6 activas,
+mínimo 3 h de margen antes de la clase).
+
+Notas de la API: el calendario (`GET calendar/AAAA-MM-DD`) devuelve `{ data: [...] }` con `schedule_id`, hora, nombre y aforo,
+pero **no las plazas ocupadas**. Reservar: `POST classes/booking/guest` (`schedule_id` + `booking_date`) → devuelve el id de
+reserva; cancelar: `POST classes/booking/cancel` (`booking_id`; no admite cancelar con menos de 1 h).
+
 Seguridad: los tokens nunca van en el código ni llegan al navegador; la función solo responde al administrador con
 sesión iniciada (la anon key pública recibe 403). AimHarder entrega una pareja nueva de tokens en cada renovación y la
 anterior deja de valer; si se pulsa «Refrescar tokens» en AimHarder hay que actualizar los secretos y vaciar la tabla.

@@ -1,20 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { llamarAimHarder, manejar, extraerClases, ocultarTokens, ErrorAimHarder } from '../supabase/functions/aimharder-probe/index.ts';
+import {
+  llamarAimHarder, manejar, extraerClases, ocultarTokens, ErrorAimHarder, reservarPrueba, cancelarPruebas,
+} from '../supabase/functions/aimharder-probe/index.ts';
 
 const JWT = (n) => `eyJhbGciOiJIUzI1NiJ9.eyJuIjoi${n}In0.firma${n}`;   // aspecto de token
 const json = (cuerpo, estado = 200) => new Response(JSON.stringify(cuerpo), { status: estado });
 
 // Almacén en memoria + API simulada que registra cada llamada
-function entorno({ tokens = { access: JWT('A1'), refresh: JWT('R1') }, respuestas = [], falloGuardar = false, admin = true } = {}) {
+function entorno({ tokens = { access: JWT('A1'), refresh: JWT('R1') }, respuestas = [], falloGuardar = false, admin = true,
+  ahora = '2026-09-20 18:00', pruebasIniciales = [], falloRegistrar = false } = {}) {
   const llamadas = [];
   let guardado = null;
   const cola = [...respuestas];
+  const pruebas = pruebasIniciales.map(p => ({ schedule_id: 1, fecha: '2026-09-21', hora: '11:00', cancelada: null, ...p }));
   const deps = {
     esAdmin: async () => admin,
     hoy: () => '2026-09-21',
+    ahoraMadrid: () => ahora,
+    pruebas: {
+      registrar: async p => { if (falloRegistrar) throw new Error('sin tabla'); pruebas.push({ ...p, cancelada: null }); },
+      listar: async () => pruebas.map(p => ({ ...p })),
+      marcarCancelada: async id => { pruebas.find(p => p.booking_id === id).cancelada = 'hoy'; },
+    },
     fetchFn: async (url, init) => {
-      llamadas.push({ url: String(url), auth: init?.headers?.Authorization, metodo: init?.method });
+      llamadas.push({ url: String(url), auth: init?.headers?.Authorization, metodo: init?.method, cuerpo: init?.body ? JSON.parse(init.body) : undefined });
       const sig = cola.shift();
       if (!sig) throw new Error('llamada inesperada a ' + url);
       return sig;
@@ -25,7 +35,7 @@ function entorno({ tokens = { access: JWT('A1'), refresh: JWT('R1') }, respuesta
       caducidad: async () => (guardado ? guardado.exp : null),
     },
   };
-  return { deps, llamadas, guardado: () => guardado };
+  return { deps, llamadas, guardado: () => guardado, pruebas };
 }
 const post = (cuerpo, cabeceras = {}) => new Request('https://x/fn', { method: 'POST', body: JSON.stringify(cuerpo), headers: { Authorization: 'Bearer usuario', ...cabeceras } });
 const CLASES = { appointments: [
@@ -168,6 +178,132 @@ test('manejar: calendario con la respuesta real devuelve las clases y el resumen
   const d = await (await manejar(post({ accion: 'calendario', fecha: '2026-09-21' }), e.deps)).json();
   assert.equal(d.ok, true);
   assert.deepEqual(d.resumen, { total: 3, rack: 1 });
+});
+
+// ── Fase 2: reservas de prueba ────────────────────────────────────────────
+const CAL_11 = { data: [
+  { schedule_id: 900, time: '11:00', name: 'Entrenamiento Funcional + Calistenia', duration: 60, limit: 12, cancelled: false },
+  { schedule_id: 1402700, time: '11:00', name: 'Rack libre', duration: 60, limit: 4, cancelled: false, class_id: 38710 },
+] };
+
+test('prueba: reserva un invitado «PRUEBA PT» en el Rack libre de esa hora y la apunta', async () => {
+  const e = entorno({ respuestas: [json(CAL_11), json({ data: { message: 'The class has been booked successfully', id: 8989 } })] });
+  const r = await reservarPrueba(e.deps, '2026-09-21', '11:00');
+  assert.equal(r.ok, true);
+  assert.equal(r.booking_id, 8989);
+  assert.equal(r.schedule_id, 1402700, 'usa el horario del Rack libre, no el de la clase funcional');
+  const reserva = e.llamadas[1];
+  assert.equal(reserva.metodo, 'POST');
+  assert.equal(reserva.url, 'https://api.aimharder.com/classes/booking/guest');
+  assert.deepEqual([reserva.cuerpo.schedule_id, reserva.cuerpo.booking_date, reserva.cuerpo.name, reserva.cuerpo.first_surname], [1402700, '2026-09-21', 'PRUEBA', 'PT']);
+  assert.deepEqual(e.pruebas.map(p => [p.booking_id, p.fecha, p.hora, p.cancelada]), [[8989, '2026-09-21', '11:00', null]]);
+});
+
+test('prueba: menos de 3 horas de margen → se rechaza sin tocar AimHarder', async () => {
+  const e = entorno({ ahora: '2026-09-21 08:30', respuestas: [] });
+  const r = await reservarPrueba(e.deps, '2026-09-21', '11:00');
+  assert.equal(r.ok, false);
+  assert.match(r.error, /3 horas/);
+  assert.equal(e.llamadas.length, 0);
+  // exactamente 3 h sí vale
+  const ok = entorno({ ahora: '2026-09-21 08:00', respuestas: [json(CAL_11), json({ data: { id: 1 } })] });
+  assert.equal((await reservarPrueba(ok.deps, '2026-09-21', '11:00')).ok, true);
+});
+
+test('prueba: datos mal escritos, hora sin Rack libre o clases duplicadas', async () => {
+  const e = entorno();
+  assert.equal((await reservarPrueba(e.deps, '21/09/2026', '11:00')).ok, false);
+  assert.equal((await reservarPrueba(e.deps, '2026-09-21', '11')).ok, false);
+  assert.equal(e.llamadas.length, 0);
+  const sin = entorno({ respuestas: [json(CAL_11)] });
+  const r = await reservarPrueba(sin.deps, '2026-09-21', '11:30');
+  assert.match(r.error, /No hay ninguna clase «Rack libre»/);
+  assert.equal(sin.llamadas.length, 1, 'solo consultó el calendario');
+  const dup = entorno({ respuestas: [json({ data: [...CAL_11.data, { schedule_id: 5, time: '11:00', name: 'Rack libre', limit: 4 }] })] });
+  assert.match((await reservarPrueba(dup.deps, '2026-09-21', '11:00')).error, /no sé cuál usar/);
+});
+
+test('prueba: si AimHarder rechaza la reserva (p. ej. aforo completo) se devuelve su mensaje y no se apunta nada', async () => {
+  const e = entorno({ respuestas: [json(CAL_11), json({ error: { code: 422, message: 'The class is full.' } }, 422)] });
+  const r = await reservarPrueba(e.deps, '2026-09-21', '11:00');
+  assert.deepEqual([r.ok, r.http, r.error, r.aforo], [false, 422, 'The class is full.', 4]);
+  assert.equal(e.pruebas.length, 0);
+});
+
+test('prueba: máximo 6 reservas activas a la vez', async () => {
+  const activas = Array.from({ length: 6 }, (_, i) => ({ booking_id: 100 + i }));
+  const e = entorno({ pruebasIniciales: activas, respuestas: [] });
+  const r = await reservarPrueba(e.deps, '2026-09-21', '11:00');
+  assert.equal(r.ok, false);
+  assert.match(r.error, /6 reservas de prueba activas/);
+  assert.equal(e.llamadas.length, 0);
+});
+
+test('prueba: si no se puede apuntar la reserva, se cancela al momento (no queda huérfana)', async () => {
+  const e = entorno({ falloRegistrar: true, respuestas: [json(CAL_11), json({ data: { id: 7777 } }), json({ data: { message: 'ok' } })] });
+  const r = await reservarPrueba(e.deps, '2026-09-21', '11:00');
+  assert.equal(r.ok, false);
+  assert.match(r.error, /cancelado/);
+  assert.equal(e.llamadas[2].url, 'https://api.aimharder.com/classes/booking/cancel');
+  assert.equal(e.llamadas[2].cuerpo.booking_id, 7777);
+});
+
+test('cancelar: solo las reservas de prueba apuntadas y aún activas', async () => {
+  const e = entorno({
+    pruebasIniciales: [{ booking_id: 11 }, { booking_id: 12, cancelada: 'ayer' }, { booking_id: 13 }],
+    respuestas: [json({ data: { message: 'cancelled' } }), json({ data: { message: 'cancelled' } })],
+  });
+  const r = await cancelarPruebas(e.deps);
+  assert.equal(r.ok, true);
+  assert.equal(r.canceladas, 2);
+  assert.deepEqual(e.llamadas.map(l => l.cuerpo.booking_id), [11, 13], 'nunca toca la 12 (ya cancelada) ni ninguna otra');
+  assert.ok(e.llamadas.every(l => l.url === 'https://api.aimharder.com/classes/booking/cancel'));
+  assert.ok(e.pruebas.every(p => p.cancelada));
+});
+
+test('cancelar: 404 cuenta como hecha; 409 (ventana vencida) se informa y se conserva', async () => {
+  const e = entorno({
+    pruebasIniciales: [{ booking_id: 21 }, { booking_id: 22 }],
+    respuestas: [json({ error: { message: 'Booking not found' } }, 404), json({ error: { code: 409, message: 'Cancellation window has expired' } }, 409)],
+  });
+  const r = await cancelarPruebas(e.deps);
+  assert.equal(r.ok, false);
+  assert.equal(r.canceladas, 1);
+  assert.match(r.resultados[1].error, /Cancellation window/);
+  assert.equal(e.pruebas.find(p => p.booking_id === 21).cancelada !== null, true);
+  assert.equal(e.pruebas.find(p => p.booking_id === 22).cancelada, null, 'la que falló sigue pendiente');
+});
+
+test('cancelar: sin pruebas activas no llama a AimHarder', async () => {
+  const e = entorno({ respuestas: [] });
+  const r = await cancelarPruebas(e.deps);
+  assert.equal(r.canceladas, 0);
+  assert.equal(e.llamadas.length, 0);
+});
+
+test('manejar: las acciones de prueba exigen ser administrador', async () => {
+  for (const accion of ['prueba_reservar', 'prueba_cancelar', 'prueba_listar']) {
+    const e = entorno({ admin: false, respuestas: [] });
+    const r = await manejar(post({ accion, fecha: '2026-09-21', hora: '11:00' }), e.deps);
+    assert.equal(r.status, 403, accion);
+    assert.equal(e.llamadas.length, 0, accion);
+  }
+});
+
+test('manejar: reservar, listar y cancelar de extremo a extremo', async () => {
+  const e = entorno({ respuestas: [json(CAL_11), json({ data: { id: 555 } }), json({ data: { message: 'cancelled' } })] });
+  const a = await (await manejar(post({ accion: 'prueba_reservar', fecha: '2026-09-21', hora: '11:00' }), e.deps)).json();
+  assert.equal(a.ok, true);
+  const l = await (await manejar(post({ accion: 'prueba_listar' }), e.deps)).json();
+  assert.deepEqual(l.pruebas.map(p => [p.booking_id, p.cancelada]), [[555, null]]);
+  const c = await (await manejar(post({ accion: 'prueba_cancelar' }), e.deps)).json();
+  assert.equal(c.canceladas, 1);
+});
+
+test('prueba: los errores nunca incluyen tokens', async () => {
+  const e = entorno({ respuestas: [json(CAL_11), json({ error: { message: `no vale ${JWT('A1')}` } }, 422)] });
+  const t = await (await manejar(post({ accion: 'prueba_reservar', fecha: '2026-09-21', hora: '11:00' }), e.deps)).text();
+  assert.ok(!t.includes('eyJ'));
 });
 
 test('extraerClases y ocultarTokens', () => {

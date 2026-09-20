@@ -1,7 +1,8 @@
-// aimharder-probe · FASE 1 (SOLO LECTURA)
+// aimharder-probe · FASE 1 (lectura) + FASE 2 (prueba controlada de reservas)
 // Función de Supabase (Edge Function) que habla con la API de AimHarder en nombre del
-// administrador. NO crea ni cancela reservas: solo comprueba la conexión y lista las clases
-// de un día (para localizar el «Rack libre», sus horas y su aforo).
+// administrador. Fase 1: comprueba la conexión y lista las clases de un día (localiza el
+// «Rack libre», sus horas y su aforo). Fase 2: reserva y cancela plazas de PRUEBA como
+// invitado «PRUEBA PT» para comprobar cómo se comporta AimHarder.
 //
 // Seguridad:
 //  · Los tokens viven en los secretos de Supabase (AIMHARDER_ACCESS_TOKEN / _REFRESH_TOKEN)
@@ -9,6 +10,9 @@
 //  · Solo puede llamarla un usuario con sesión iniciada cuyo perfil sea 'admin'. La anon key
 //    (pública) NO sirve: se rechaza con 403.
 //  · Ninguna respuesta incluye tokens; cualquier cosa con aspecto de token se oculta.
+//  · Solo se cancelan reservas que la propia función haya creado y apuntado en
+//    `aimharder_pruebas` (sql/05_aimharder_pruebas.sql). Máximo 6 pruebas activas a la vez
+//    y solo con al menos 3 horas de margen antes de la clase.
 
 const API = 'https://api.aimharder.com';
 const CORS = {
@@ -16,6 +20,8 @@ const CORS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
+const MARGEN_MIN = 180;            // la prueba debe ser ≥ 3 h antes de la clase (AimHarder no deja cancelar con < 1 h)
+const MAX_PRUEBAS_ACTIVAS = 6;
 
 export interface Tokens { access: string; refresh: string }
 export interface Caducidad { access: string | null; refresh: string | null }
@@ -24,11 +30,19 @@ export interface AlmacenTokens {
   guardar(t: Tokens, exp: Caducidad): Promise<void>;
   caducidad(): Promise<Caducidad | null>;
 }
+export interface Prueba { booking_id: number; fecha: string; hora: string; schedule_id: number; cancelada: string | null }
+export interface AlmacenPruebas {
+  registrar(p: { booking_id: number; fecha: string; hora: string; schedule_id: number }): Promise<void>;
+  listar(): Promise<Prueba[]>;
+  marcarCancelada(booking_id: number): Promise<void>;
+}
 export interface Deps {
   esAdmin(authorization: string | null): Promise<boolean>;
   almacen: AlmacenTokens;
+  pruebas: AlmacenPruebas;
   fetchFn: typeof fetch;
   hoy(): string;
+  ahoraMadrid(): string;           // 'AAAA-MM-DD HH:MM' en hora de Madrid
 }
 interface Respuesta { estado: number; json: any }
 
@@ -97,6 +111,73 @@ export function extraerClases(json: any) {
 }
 
 const mensajeApi = (r: Respuesta): string => ocultarTokens(String(r.json?.error?.message ?? r.json?.message ?? r.json?._texto ?? `HTTP ${r.estado}`));
+const exito = (r: Respuesta): boolean => r.estado === 200 || r.estado === 201;
+const minutosLocal = (s: string): number => {        // 'AAAA-MM-DD HH:MM' → minutos (ambas fechas en la misma zona)
+  const [f, h] = s.split(' ');
+  const [a, m, d] = f.split('-').map(Number);
+  const [hh, mm] = h.split(':').map(Number);
+  return Date.UTC(a, m - 1, d, hh, mm) / 60000;
+};
+
+// ── FASE 2 · prueba controlada ─────────────────────────────────────────────
+export async function reservarPrueba(deps: Deps, fecha: string, hora: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !/^\d{2}:\d{2}$/.test(hora)) {
+    return { ok: false, error: 'Indica la fecha (AAAA-MM-DD) y la hora (HH:MM).' };
+  }
+  if (minutosLocal(`${fecha} ${hora}`) - minutosLocal(deps.ahoraMadrid()) < MARGEN_MIN) {
+    return { ok: false, error: 'La prueba debe hacerse al menos 3 horas antes de la clase, para poder cancelarla sin problema (AimHarder no deja cancelar con menos de 1 hora).' };
+  }
+  const activas = (await deps.pruebas.listar()).filter(p => !p.cancelada);
+  if (activas.length >= MAX_PRUEBAS_ACTIVAS) {
+    return { ok: false, error: `Ya hay ${activas.length} reservas de prueba activas. Cancélalas antes de crear más.` };
+  }
+  const cal = await llamarAimHarder(deps, 'GET', `calendar/${fecha}`);
+  if (cal.estado !== 200) return { ok: false, http: cal.estado, error: mensajeApi(cal) };
+  const candidatas = (extraerClases(cal.json) ?? []).filter(c => c.es_rack && c.hora === hora && !c.cancelada);
+  if (candidatas.length === 0) return { ok: false, error: `No hay ninguna clase «Rack libre» a las ${hora} el ${fecha}.` };
+  if (candidatas.length > 1) return { ok: false, error: `Hay ${candidatas.length} clases «Rack libre» a las ${hora}; no sé cuál usar.` };
+  const clase = candidatas[0];
+
+  const r = await llamarAimHarder(deps, 'POST', 'classes/booking/guest', {
+    schedule_id: clase.schedule_id, booking_date: fecha,
+    name: 'PRUEBA', first_surname: 'PT', booking_notes: 'Prueba automática de la integración: se cancelará',
+  });
+  const id = r.json?.data?.id ?? r.json?.id;
+  if (!exito(r) || id == null) {
+    return { ok: false, http: r.estado, schedule_id: clase.schedule_id, aforo: clase.aforo, error: mensajeApi(r) };
+  }
+  try {
+    await deps.pruebas.registrar({ booking_id: Number(id), fecha, hora, schedule_id: clase.schedule_id });
+  } catch (_e) {
+    // Sin apuntarla no podríamos cancelarla luego: se anula al momento para no dejarla huérfana.
+    await llamarAimHarder(deps, 'POST', 'classes/booking/cancel', { booking_id: Number(id), reason: 'Prueba abortada' });
+    return { ok: false, error: 'No se pudo apuntar la reserva de prueba (¿falta ejecutar sql/05_aimharder_pruebas.sql?). Se ha cancelado para no dejarla huérfana.' };
+  }
+  return {
+    ok: true, booking_id: Number(id), schedule_id: clase.schedule_id, aforo: clase.aforo,
+    mensaje: `Reserva de prueba creada (nº ${id}) en «Rack libre» ${hora} del ${fecha}. Mira en AimHarder si las plazas ocupadas han subido.`,
+  };
+}
+
+export async function cancelarPruebas(deps: Deps) {
+  const activas = (await deps.pruebas.listar()).filter(p => !p.cancelada);   // solo las que creó esta función
+  if (activas.length === 0) return { ok: true, canceladas: 0, resultados: [], mensaje: 'No hay reservas de prueba activas.' };
+  const resultados: any[] = [];
+  for (const p of activas) {
+    const r = await llamarAimHarder(deps, 'POST', 'classes/booking/cancel', { booking_id: p.booking_id, reason: 'Fin de la prueba de integración' });
+    if (exito(r) || r.estado === 404) {                 // 404: ya no existía en AimHarder
+      await deps.pruebas.marcarCancelada(p.booking_id);
+      resultados.push({ booking_id: p.booking_id, ok: true, nota: r.estado === 404 ? 'ya no existía en AimHarder' : undefined });
+    } else {
+      resultados.push({ booking_id: p.booking_id, ok: false, http: r.estado, error: mensajeApi(r) });
+    }
+  }
+  const canceladas = resultados.filter(x => x.ok).length;
+  return {
+    ok: canceladas === resultados.length, canceladas, resultados,
+    mensaje: canceladas === resultados.length ? `${canceladas} reserva(s) de prueba cancelada(s).` : `Se cancelaron ${canceladas} de ${resultados.length}; revisa los errores.`,
+  };
+}
 
 export async function manejar(req: Request, deps: Deps): Promise<Response> {
   const responder = (cuerpo: unknown, estado = 200) =>
@@ -127,7 +208,11 @@ export async function manejar(req: Request, deps: Deps): Promise<Response> {
       return responder({ ok: true, fecha, clases, resumen: { total: clases.length, rack: clases.filter((c: any) => c.es_rack).length } });
     }
 
-    return responder({ error: 'Acción no válida (usa "estado" o "calendario").' }, 400);
+    if (cuerpo?.accion === 'prueba_reservar') return responder(await reservarPrueba(deps, String(cuerpo.fecha ?? ''), String(cuerpo.hora ?? '')));
+    if (cuerpo?.accion === 'prueba_cancelar') return responder(await cancelarPruebas(deps));
+    if (cuerpo?.accion === 'prueba_listar') return responder({ ok: true, pruebas: await deps.pruebas.listar() });
+
+    return responder({ error: 'Acción no válida.' }, 400);
   } catch (e: any) {
     if (e instanceof ErrorAimHarder) return responder({ ok: false, error: e.message });
     return responder({ ok: false, error: ocultarTokens(String(e?.message ?? e)) }, 500);
@@ -163,10 +248,29 @@ if (typeof Deno !== 'undefined') {
       },
     };
 
+    const pruebas: AlmacenPruebas = {
+      async registrar(p) {
+        const { error } = await admin.from('aimharder_pruebas').insert(p);
+        if (error) throw new Error(error.message);
+      },
+      async listar() {
+        const { data, error } = await admin.from('aimharder_pruebas').select('booking_id, fecha, hora, schedule_id, cancelada').order('id', { ascending: true });
+        if (error) throw new ErrorAimHarder('Falta la tabla aimharder_pruebas: ejecuta sql/05_aimharder_pruebas.sql en Supabase.', 500);
+        return data ?? [];
+      },
+      async marcarCancelada(booking_id) {
+        await admin.from('aimharder_pruebas').update({ cancelada: new Date().toISOString() }).eq('booking_id', booking_id);
+      },
+    };
+
     return manejar(req, {
       fetchFn: fetch,
       almacen,
+      pruebas,
       hoy: () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Madrid' }).format(new Date()),
+      ahoraMadrid: () => new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'Europe/Madrid', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+      }).format(new Date()),
       async esAdmin(authorization) {
         const jwt = (authorization ?? '').replace(/^Bearer\s+/i, '');
         if (!jwt) return false;
