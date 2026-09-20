@@ -172,6 +172,7 @@ a.meta-chip:hover { border-color: var(--red); color: var(--text); }
 .alert-ok { background: rgba(76,175,80,.1); border-color: var(--green-light); color: var(--green-light); }
 .ah-panel { max-width: 900px; }
 .ah-fila { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ah-crudo { background: var(--panel); border: 1px solid var(--border); padding: 12px; font-family: var(--mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; max-height: 420px; overflow: auto; color: #ccc; user-select: all; }
 .fila-rack td { background: rgba(200,160,48,.08); }
 .alert-info { background: rgba(74,159,212,.08); border-color: var(--blue-light); color: var(--blue-light); }
 

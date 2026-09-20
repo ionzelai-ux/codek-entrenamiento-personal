@@ -17,7 +17,10 @@ function estadoHTML() {
 function diaHTML() {
   const d = S.ah.dia;
   if (!d) return '';
-  if (!d.ok) return `<div class="alert alert-danger">✖ ${esc(d.error || 'Error')}${d.forma ? `<br><small>Campos recibidos: ${esc(d.forma.join(', '))}</small>` : ''}</div>`;
+  if (!d.ok) {
+    return `<div class="alert alert-danger">✖ ${esc(d.error || 'Error')}${d.forma ? `<br><small>Campos recibidos: ${esc(d.forma.join(', '))}</small>` : ''}</div>
+      ${d.crudo ? `<div class="hint" style="margin:10px 0 4px">Respuesta recibida de AimHarder (sin tokens), para diagnóstico:</div><pre class="ah-crudo">${esc(d.crudo)}</pre>` : ''}`;
+  }
   const filas = d.clases.map(c => `
     <tr class="${c.es_rack ? 'fila-rack' : ''}">
       <td class="num">${esc(c.hora)}</td><td>${esc(c.nombre)}${c.es_rack ? ' <span class="chip amarillo">RACK</span>' : ''}</td>
