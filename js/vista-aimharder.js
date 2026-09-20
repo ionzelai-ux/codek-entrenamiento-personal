@@ -29,9 +29,11 @@ function diaHTML() {
   return `
     <div class="section-title" style="margin-top:22px">${esc(fmtFechaDia(d.fecha))} · ${d.resumen.total} clases · ${d.resumen.rack} de Rack libre</div>
     <div class="tabla-wrap"><table class="tabla">
-      <thead><tr><th class="num">Hora</th><th>Clase</th><th class="num">Duración</th><th class="num">Aforo</th><th>Sala</th><th class="num">ID horario</th></tr></thead>
+      <thead><tr><th class="num">Hora</th><th>Clase</th><th class="num">Duración</th><th class="num">Aforo máx.</th><th>Sala</th><th class="num">ID horario</th></tr></thead>
       <tbody>${filas || '<tr><td colspan="6" class="vacio">Sin clases ese día</td></tr>'}</tbody>
-    </table></div>`;
+    </table></div>
+    <p class="hint" style="margin-top:10px">«Aforo máx.» es la capacidad de la clase. El calendario de la API de AimHarder <b>no informa de las plazas ocupadas</b>:
+      para saber cuántas quedan libres hay que mirar en AimHarder.</p>`;
 }
 
 export function renderAimHarder(el) {
