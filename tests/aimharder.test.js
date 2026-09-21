@@ -83,6 +83,25 @@ test('llamar: token caducado → renueva, guarda la pareja nueva y reintenta con
   assert.equal(e.guardado().exp.refresh, '2027-01-01 10:00:00');
 });
 
+test('llamar: «Token has expired» con HTTP 400 (caso real) también renueva y reintenta', async () => {
+  const e = entorno({ respuestas: [
+    json({ error: { code: 400, message: 'Token has expired' } }, 400),
+    json({ 'access-token': JWT('A2'), 'refresh-token': JWT('R2') }),
+    json(CLASES),
+  ] });
+  const r = await llamarAimHarder(e.deps, 'GET', 'calendar/2026-09-21');
+  assert.equal(r.estado, 200);
+  assert.equal(e.llamadas[1].url, 'https://api.aimharder.com/auth/tokens/refresh');
+  assert.equal(e.llamadas[2].auth, `Bearer ${JWT('A2')}`);
+});
+
+test('llamar: un 400 que NO habla de caducidad no renueva nada', async () => {
+  const e = entorno({ respuestas: [json({ error: { message: 'Bad request' } }, 400)] });
+  const r = await llamarAimHarder(e.deps, 'GET', 'x');
+  assert.equal(r.estado, 400);
+  assert.equal(e.llamadas.length, 1);
+});
+
 test('llamar: si no se puede renovar, error claro y sin tokens en el mensaje', async () => {
   const e = entorno({ respuestas: [json({}, 401), json({ error: { message: 'refresh caducado' } }, 401)] });
   await assert.rejects(() => llamarAimHarder(e.deps, 'GET', 'x'), err => {

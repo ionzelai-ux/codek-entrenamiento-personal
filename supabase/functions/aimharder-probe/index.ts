@@ -138,8 +138,9 @@ async function pedir(fetchFn: typeof fetch, metodo: string, ruta: string, token:
   return { estado: r.status, json, cab };
 }
 
+// AimHarder avisa de un token caducado con 401 o, según el caso, con 400/403 y el texto «Token has expired».
 const caducado = (r: Respuesta): boolean =>
-  r.estado === 401 || (r.estado === 403 && /expir|caduc/i.test(JSON.stringify(r.json)));
+  r.estado === 401 || ((r.estado === 400 || r.estado === 403) && /expir|caduc/i.test(JSON.stringify(r.json)));
 
 // Renueva los tokens. La pareja anterior queda invalidada, así que se guarda ANTES de usarla.
 async function renovar(deps: Deps, t: Tokens): Promise<Tokens> {
