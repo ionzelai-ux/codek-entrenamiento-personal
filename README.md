@@ -113,4 +113,6 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   divide entre 1 + IVA/100 → si a el entrenador se le paga en *nómina* (elegible por bono) se divide otra vez, sobre
   lo anterior, entre 1 + Seguridad Social/100 → sobre esa base se aplica el % de comisión según el origen del cliente
   (Codek o traído por el propio entrenador). Los cuatro porcentajes son editables y recalculan al momento, como una
-  hoja de cálculo; el trato de cada bono y los porcentajes se guardan para la próxima vez.
+  hoja de cálculo; el trato de cada bono y los porcentajes se guardan para la próxima vez. Un entrenador puede
+  quedar fuera del sistema de comisiones (`perfiles.aplica_comisiones`, `sql/09_comisiones_entrenadores.sql`) sin que
+  le afecte al resto de la app: solo desaparece de esta pestaña.

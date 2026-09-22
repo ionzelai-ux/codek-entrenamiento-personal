@@ -263,6 +263,10 @@ export function totalesComisiones(filas) {
   return t;
 }
 
+// Entrenadores que participan en el sistema de comisiones (`aplica_comisiones` es true por defecto;
+// se puede desactivar uno concreto sin que deje de funcionar en el resto de la app).
+export const entrenadoresConComision = entrenadores => entrenadores.filter(e => e.aplica_comisiones !== false);
+
 export function agruparComisionesPorEntrenador(filas) {
   const g = new Map();
   for (const f of filas) {

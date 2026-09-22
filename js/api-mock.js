@@ -9,7 +9,7 @@ const clonar = x => JSON.parse(JSON.stringify(x));
 const perfiles = [
   { id: 'p-admin', usuario: 'admin', nombre: 'Jon', rol: 'admin', color: '#8B2020' },
   { id: 'p-edu', usuario: 'eduardo', nombre: 'Eduardo', rol: 'entrenador', color: '#4a9fd4' },
-  { id: 'p-jes', usuario: 'jesus', nombre: 'Jesús', rol: 'entrenador', color: '#d4903a' },
+  { id: 'p-jes', usuario: 'jesus', nombre: 'Jesús', rol: 'entrenador', color: '#d4903a', aplica_comisiones: false },
 ];
 const clientes = [], bonos = [], sesiones = [];
 let actual = null;

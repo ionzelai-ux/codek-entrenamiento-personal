@@ -4,7 +4,8 @@
 import { S, bus, esAdmin, entrenadorDe, nombreCompleto, entrenadorFiltroId } from './store.js';
 import { esc, fmtEUR, fmtFecha, nombreMes, etiquetaMetodo, toast } from './util.js';
 import {
-  hoyISO, primerDiaMes, liquidacionMes, totalesComisiones, agruparComisionesPorEntrenador, DEFAULT_CONFIG_COMISIONES,
+  hoyISO, primerDiaMes, liquidacionMes, totalesComisiones, agruparComisionesPorEntrenador, entrenadoresConComision,
+  DEFAULT_CONFIG_COMISIONES,
 } from './logica.js';
 
 export async function cargarComisiones() {
@@ -27,7 +28,8 @@ export async function cargarComisiones() {
 function datos() {
   const config = S.comisiones.config || DEFAULT_CONFIG_COMISIONES;
   const filtro = entrenadorFiltroId();
-  const clientesVisibles = filtro ? S.clientes.filter(c => c.entrenador_id === filtro) : S.clientes;
+  const idsConComision = new Set(entrenadoresConComision(S.entrenadores).map(e => e.id));
+  const clientesVisibles = S.clientes.filter(c => idsConComision.has(c.entrenador_id) && (!filtro || c.entrenador_id === filtro));
   const overridesObj = Object.fromEntries(S.comisiones.overrides);
   return { config, filtro, filas: liquidacionMes(clientesVisibles, S.comisiones.mes, config, overridesObj) };
 }
@@ -75,6 +77,9 @@ function grupoHTML(entrenadorId, filas) {
 
 function resultadoHTML() {
   const { filtro, filas } = datos();
+  if (filtro && !entrenadoresConComision(S.entrenadores).some(e => e.id === filtro)) {
+    return `<div class="vacio">${esc(entrenadorDe(filtro)?.nombre || 'Este entrenador')} no está, por ahora, en el sistema de comisiones.</div>`;
+  }
   if (!filas.length) return `<div class="vacio">No hay bonos confirmados como pagados en ${nombreMes(S.comisiones.mes)}${filtro ? '' : ', para ningún entrenador'}.</div>`;
   if (filtro) return `${tablaFilasHTML(filas)}${subtotalHTML(totalesComisiones(filas))}`;
   const grupos = agruparComisionesPorEntrenador(filas);

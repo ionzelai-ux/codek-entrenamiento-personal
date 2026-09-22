@@ -6,7 +6,7 @@ import {
   solapan, buscarConflictos, generarFechas, repartirCarriles, agrupar, sumar, camposPendientes,
   estadoCobro, facturacionMes,
   comisionBono, esDeclaradoPorDefecto, bonosLiquidablesMes, liquidacionMes, totalesComisiones, agruparComisionesPorEntrenador,
-  DEFAULT_CONFIG_COMISIONES,
+  entrenadoresConComision, DEFAULT_CONFIG_COMISIONES,
 } from '../js/logica.js';
 
 test('fechas: lunes, día de la semana y meses', () => {
@@ -315,4 +315,9 @@ test('agrupar por entrenador: cada fila va con su entrenador', () => {
   const g = agruparComisionesPorEntrenador(filas);
   assert.equal(g.get('edu').length, 2);
   assert.equal(g.get('jes').length, 1);
+});
+
+test('entrenadores con comisión: por defecto todos, salvo el que se haya desactivado', () => {
+  const entrenadores = [{ id: 'edu', aplica_comisiones: true }, { id: 'jes', aplica_comisiones: false }, { id: 'nueva' }];
+  assert.deepEqual(entrenadoresConComision(entrenadores).map(e => e.id), ['edu', 'nueva']);
 });
