@@ -54,6 +54,19 @@ header { background: var(--dark); border-bottom: 3px solid var(--red); padding: 
 .chip.granate { border-color: var(--red-light); color: #e06060; }
 .chip.gris { color: #aaa; }
 .chip.pendiente { border-color: var(--yellow); color: #111; background: var(--yellow); font-weight: 700; }
+.chip.rojo { border-color: var(--red-light); color: #fff; background: var(--red); font-weight: 700; }
+
+/* Cobros en la lista de clientes */
+.pago-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.pago-txt { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.pago-txt b { color: var(--text); font-weight: 600; }
+.btn-cobrar { margin-left: auto; background: rgba(76,175,80,.14); border: 1px solid var(--green-light); color: var(--green-light); font-family: var(--mono); letter-spacing: 1px; cursor: pointer; }
+.btn-cobrar:hover { background: var(--green-light); color: #111; }
+.cobro-strip { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--muted); padding: 8px 10px; border: 1px solid var(--yellow); background: rgba(200,160,48,.08); }
+.cobro-strip b { color: var(--text); }
+.cobro-link { background: none; border: none; padding: 0; font: inherit; color: var(--yellow); cursor: pointer; text-decoration: underline dotted; }
+.cobro-link:hover { color: #fff; }
+.alert-flex { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .alert-pendiente { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; background: rgba(200,160,48,.12); border-color: var(--yellow); color: var(--yellow); }
 .form-input.invalido, .seg.invalido { border-color: #e05555 !important; background: rgba(224,85,85,.12); }
 .seg.invalido { box-shadow: 0 0 0 1px #e05555; }
@@ -132,7 +145,7 @@ input[type=date], input[type=time] { color-scheme: dark; }
 .section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 
 /* ── Clientes ── */
-.split { display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start; }
+.split { display: grid; grid-template-columns: clamp(340px, 34vw, 480px) 1fr; gap: 20px; align-items: start; }
 .lista { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 84px; max-height: calc(100vh - 100px); }
 .lista-items { overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 2px; }
 .volver { display: none; margin-bottom: 14px; }
@@ -247,7 +260,7 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
 .blk-n { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ── Resumen ── */
-.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 26px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 26px; }
 .kpi { background: var(--panel); border: 1px solid var(--border); padding: 16px; }
 .kpi-n { font-family: var(--display); font-size: 34px; letter-spacing: 1px; line-height: 1.1; }
 .kpi-l { font-family: var(--mono); font-size: 10px; letter-spacing: 1px; color: var(--muted); margin-top: 6px; }
@@ -256,6 +269,21 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
 .tabla th { font-family: var(--mono); font-size: 9px; letter-spacing: 2px; color: var(--muted); text-transform: uppercase; text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 .tabla td { padding: 10px; border-bottom: 1px solid var(--border); }
 .tabla .num { text-align: right; font-family: var(--mono); white-space: nowrap; }
+.azul { color: var(--blue-light); }
+
+/* Facturación prevista (este mes / mes siguiente) */
+.prevs { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 10px; align-items: start; }
+.prev { background: var(--panel); border: 1px solid var(--border); padding: 16px; }
+.prev-mes { font-family: var(--display); font-size: 20px; letter-spacing: 3px; color: var(--red); display: flex; align-items: baseline; gap: 10px; }
+.prev-mes span { font-family: var(--mono); font-size: 10px; letter-spacing: 2px; color: var(--muted); }
+.prev-total { font-family: var(--display); font-size: 42px; letter-spacing: 1px; line-height: 1.15; margin: 4px 0 10px; }
+.prev-bar { display: flex; height: 6px; background: var(--border); margin-bottom: 10px; }
+.prev-bar i { display: block; height: 100%; }
+.prev-ley { display: flex; flex-wrap: wrap; gap: 4px 16px; font-family: var(--mono); font-size: 10px; color: var(--muted); margin-bottom: 12px; }
+.prev-ley i { display: inline-block; width: 8px; height: 8px; margin-right: 5px; }
+.prev-ley b { color: var(--text); font-weight: 600; }
+.tabla-prev td { padding: 7px 8px; font-size: 12px; }
+.prev-entr { font-family: var(--mono); font-size: 9px; letter-spacing: 1px; margin-left: 4px; }
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--dark); }
@@ -281,6 +309,8 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
   .client-title { font-size: 32px; }
   .cw-row { grid-template-columns: repeat(2, 1fr); }
   .kpis { grid-template-columns: 1fr 1fr; }
+  .prevs { grid-template-columns: 1fr; }
+  .cobro-strip { font-size: 11px; }
   .cal-month-lbl { min-width: 0; font-size: 19px; flex: 1; }
   .cal-cell { min-height: 64px; }
   .cell-sess { font-size: 9px; padding: 1px 2px; }

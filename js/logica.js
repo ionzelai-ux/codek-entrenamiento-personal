@@ -62,7 +62,28 @@ export function creditos(cliente, ahora = new Date()) {
   return { total, hechas, reservadas, noVino, restantes, libres: restantes - reservadas };
 }
 
-export const estadoPago = (bono, hoy = hoyISO()) => (bono.fecha_pago <= hoy ? 'cobrado' : 'programado');
+// Estado de pago de un bono: 'pagado' solo si el administrador lo confirmó (pagado_el);
+// si no, 'pendiente' cuando su fecha de pago es hoy o ya pasó, y 'programado' cuando es futura.
+export const estadoPago = (bono, hoy = hoyISO()) => (bono.pagado_el ? 'pagado' : bono.fecha_pago <= hoy ? 'pendiente' : 'programado');
+
+export const UMBRAL_RENOVAR = 2;   // con tantas sesiones o menos (y nada más por cobrar) toca renovar
+
+// Situación de cobro de un cliente (para la lista): la primera que se cumpla de
+//   pendiente (algún bono vencido sin confirmar) → programado (próximo pago) → renovar (quedan pocas sesiones) → pagado.
+// Devuelve null para los potenciales. `importe` y `fecha` son los del bono que interesa en cada caso.
+export function estadoCobro(cliente, hoy = hoyISO(), ahora = new Date()) {
+  if (cliente.estado !== 'efectivo') return null;
+  const bonos = [...(cliente.bonos || [])].sort((a, b) => a.fecha_pago.localeCompare(b.fecha_pago));
+  if (!bonos.length) return { clave: 'sin_bono', importe: 0, fecha: null, n: 0, bonos: [] };
+  const suma = l => Math.round(l.reduce((t, b) => t + (Number(b.precio) || 0), 0) * 100) / 100;
+  const pendientes = bonos.filter(b => estadoPago(b, hoy) === 'pendiente');
+  if (pendientes.length) return { clave: 'pendiente', importe: suma(pendientes), fecha: pendientes[0].fecha_pago, n: pendientes.length, bonos: pendientes };
+  const programados = bonos.filter(b => estadoPago(b, hoy) === 'programado');
+  if (programados.length) return { clave: 'programado', importe: suma([programados[0]]), fecha: programados[0].fecha_pago, n: programados.length, bonos: programados };
+  const ultimo = bonos[bonos.length - 1];
+  const clave = creditos(cliente, ahora).restantes <= UMBRAL_RENOVAR ? 'renovar' : 'pagado';
+  return { clave, importe: Number(ultimo.precio) || 0, fecha: ultimo.fecha_pago, n: 0, bonos: [ultimo] };
+}
 
 // ── Solapes ───────────────────────────────────────────────────────────────
 export function solapan(a, b) {
@@ -138,13 +159,14 @@ export function camposPendientes(c) {
 }
 
 // ── Resumen de facturación ────────────────────────────────────────────────
-// mes = 'YYYY-MM'. cobrado = bonos con fecha de pago en el mes ya llegada;
-// programado = con fecha de pago futura dentro del mes; estimado = pipeline de potenciales activos.
+// mes = 'YYYY-MM' (el mes se toma de la fecha de pago del bono). cobrado = confirmado como pagado por el
+// administrador; pendiente = fecha de pago ya llegada pero sin confirmar; programado = fecha de pago futura;
+// estimado = pipeline de potenciales activos.
 export function agrupar(clientes, clave, mes, hoy = hoyISO()) {
   const g = new Map();
   for (const c of clientes) {
     const k = clave(c);
-    if (!g.has(k)) g.set(k, { efectivos: 0, potenciales: 0, cobrado: 0, programado: 0, estimado: 0 });
+    if (!g.has(k)) g.set(k, { efectivos: 0, potenciales: 0, cobrado: 0, pendiente: 0, programado: 0, estimado: 0 });
     const r = g.get(k);
     if (c.activo) {
       if (c.estado === 'efectivo') r.efectivos++;
@@ -152,14 +174,32 @@ export function agrupar(clientes, clave, mes, hoy = hoyISO()) {
     }
     for (const b of c.bonos || []) {
       if (String(b.fecha_pago).slice(0, 7) !== mes) continue;
-      if (b.fecha_pago <= hoy) r.cobrado += Number(b.precio) || 0;
-      else r.programado += Number(b.precio) || 0;
+      const e = estadoPago(b, hoy);
+      r[e === 'pagado' ? 'cobrado' : e] += Number(b.precio) || 0;
     }
   }
   return g;
 }
 export function sumar(filas) {
-  const t = { efectivos: 0, potenciales: 0, cobrado: 0, programado: 0, estimado: 0 };
+  const t = { efectivos: 0, potenciales: 0, cobrado: 0, pendiente: 0, programado: 0, estimado: 0 };
   for (const r of filas) for (const k of Object.keys(t)) t[k] += r[k];
   return t;
+}
+
+// Facturación prevista de un mes ('YYYY-MM') según las fechas de pago de los bonos: total, desglose por
+// estado (pagado / pendiente / programado) y la lista de bonos ordenada por fecha de pago.
+export function facturacionMes(clientes, mes, hoy = hoyISO()) {
+  const t = { total: 0, pagado: 0, pendiente: 0, programado: 0 };
+  const filas = [];
+  for (const c of clientes) {
+    for (const b of c.bonos || []) {
+      if (String(b.fecha_pago).slice(0, 7) !== mes) continue;
+      const estado = estadoPago(b, hoy), importe = Number(b.precio) || 0;
+      t.total += importe; t[estado] += importe;
+      filas.push({ cliente: c, bono: b, estado, importe });
+    }
+  }
+  filas.sort((a, b) => a.bono.fecha_pago.localeCompare(b.bono.fecha_pago));
+  for (const k of Object.keys(t)) t[k] = Math.round(t[k] * 100) / 100;
+  return { mes, ...t, filas };
 }

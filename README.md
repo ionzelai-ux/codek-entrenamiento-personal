@@ -98,3 +98,12 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
 - **Info pendiente**: apellidos, email, fecha de nacimiento, veces por semana (potenciales) y bono o método de pago
   (clientes) no bloquean, pero la ficha se marca «Info pendiente» en la lista y en la ficha. Hay un filtro para verlas.
 - **Origen**: *Codek* = captado por la empresa · *Externo* = lo trae el entrenador.
+- **Estado de pago de un bono**: *pagado* solo si el administrador lo confirmó con «✓ Marcar pagado» (se guarda la
+  fecha); si no, *pendiente de pago* cuando su fecha de pago es hoy o ya pasó, y *pago programado* cuando es futura.
+  Solo el administrador puede confirmar o deshacer un pago — lo impone también la base de datos (`sql/07_pagos.sql`),
+  no solo la pantalla. Al llegar el estado de pago de la lista de clientes, se ve sin entrar en cada ficha, con un
+  filtro «Pago» y un aviso arriba con el total pendiente de cobro.
+- **Renovar**: si el último bono de un cliente está pagado y le quedan 2 sesiones o menos (o se agotó) sin que haya
+  un bono nuevo, se marca «RENOVAR» con el importe del último bono como referencia.
+- **Resumen → Facturación prevista**: la fecha de pago de cada bono decide en qué mes cuenta; muestra el total de
+  este mes y del siguiente, desglosado en pagado / pendiente de cobro / programado, con el detalle de cada bono.

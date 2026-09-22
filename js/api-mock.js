@@ -20,8 +20,8 @@ function cliente(datos) {
   clientes.push(c);
   return c;
 }
-function bono(c, sesionesN, precio, pago, inicio, metodo_pago = 'tarjeta') {
-  bonos.push({ id: nuevoId(), cliente_id: c.id, sesiones: sesionesN, precio, fecha_pago: pago, fecha_inicio: inicio, metodo_pago });
+function bono(c, sesionesN, precio, pago, inicio, metodo_pago = 'tarjeta', pagado_el = null) {
+  bonos.push({ id: nuevoId(), cliente_id: c.id, sesiones: sesionesN, precio, fecha_pago: pago, fecha_inicio: inicio, metodo_pago, pagado_el });
 }
 function sesion(c, fecha, hora, estado = 'reservada') {
   sesiones.push({ id: nuevoId(), cliente_id: c.id, bono_id: null, fecha, hora, duracion_min: 60, estado, nota: '' });
@@ -31,7 +31,7 @@ function sesion(c, fecha, hora, estado = 'reservada') {
   const hoy = hoyISO(), lun = lunesDe(hoy);
   const ana = cliente({ entrenador_id: 'p-edu', nombre: 'Ana', apellidos: 'Demo Ruiz', estado: 'efectivo', origen: 'codek',
     fecha_nacimiento: '1988-04-12', telefono: '600 000 001', dias_fijos: [{ dia: 1, hora: '10:00' }, { dia: 3, hora: '10:00' }] });
-  bono(ana, 8, 336, addDias(lun, -10), addDias(lun, -10));
+  bono(ana, 8, 336, addDias(lun, -10), addDias(lun, -10), 'tarjeta', addDias(lun, -9));   // pagado
   [-7, -5].forEach(n => sesion(ana, addDias(lun, n), '10:00', 'hecha'));
   [0, 2, 7].forEach(n => sesion(ana, addDias(lun, n), '10:00'));
   const luis = cliente({ entrenador_id: 'p-edu', nombre: 'Luis', apellidos: 'Ejemplo Gil', estado: 'efectivo', origen: 'externo', telefono: '600 000 002' });
@@ -44,6 +44,13 @@ function sesion(c, fecha, hora, estado = 'reservada') {
   sesion(pablo, addDias(lun, 0), '10:00');
   sesion(pablo, addDias(lun, 3), '19:00');
   cliente({ entrenador_id: 'p-jes', nombre: 'Lucía', apellidos: 'Ejemplo', estado: 'potencial', origen: 'externo', pot_sesiones_bono: 12, pot_veces_semana: 3, pot_precio: 480 });
+  // Bono pagado al que le quedan 2 sesiones → «RENOVAR»
+  const nerea = cliente({ entrenador_id: 'p-jes', nombre: 'Nerea', apellidos: 'Demo Vidal', estado: 'efectivo', origen: 'codek', telefono: '600 000 003' });
+  bono(nerea, 4, 180, addDias(lun, -30), addDias(lun, -30), 'efectivo', addDias(lun, -30));
+  [-28, -21].forEach(n => sesion(nerea, addDias(lun, n), '09:00', 'hecha'));
+  // Bono con pago programado para el mes siguiente
+  const ivan = cliente({ entrenador_id: 'p-edu', nombre: 'Iván', apellidos: 'Demo Ortiz', estado: 'efectivo', origen: 'externo', telefono: '600 000 004' });
+  bono(ivan, 8, 336, addDias(hoy.slice(0, 7) + '-01', 35).slice(0, 7) + '-05', addDias(hoy.slice(0, 7) + '-01', 35).slice(0, 7) + '-05', 'transferencia');
 })();
 
 const visibles = () => (actual.rol === 'admin' ? clientes : clientes.filter(c => c.entrenador_id === actual.id));
@@ -147,10 +154,16 @@ export async function eliminarCliente(id) {
   for (const arr of [bonos, sesiones]) for (let i = arr.length - 1; i >= 0; i--) if (arr[i].cliente_id === id) arr.splice(i, 1);
   clientes.splice(clientes.findIndex(c => c.id === id), 1);
 }
-export async function crearBono(b) { const n = { id: nuevoId(), ...b }; bonos.push(n); return clonar(n); }
+// Como el disparador de la base de datos: solo el administrador confirma (o deshace) un pago.
+const SOLO_ADMIN_PAGO = 'Solo el administrador puede cambiar el estado de pago de un bono';
+export async function crearBono(b) {
+  if (actual.rol !== 'admin' && b.pagado_el) throw new Error(SOLO_ADMIN_PAGO);
+  const n = { id: nuevoId(), pagado_el: null, ...b }; bonos.push(n); return clonar(n);
+}
 export async function actualizarBono(id, cambios) {
   const b = bonos.find(x => x.id === id);
   if (!b || !idsVisibles().has(b.cliente_id)) throw new Error('Bono no encontrado');
+  if (actual.rol !== 'admin' && 'pagado_el' in cambios && (cambios.pagado_el || null) !== (b.pagado_el || null)) throw new Error(SOLO_ADMIN_PAGO);
   Object.assign(b, cambios);
   return clonar(b);
 }

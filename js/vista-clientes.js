@@ -1,22 +1,59 @@
 // Clientes: lista con filtros + ficha (datos, bonos, días fijos, créditos y sesiones).
 import { S, bus, esAdmin, entrenadorDe, nombreCompleto, clienteDe, entrenadorFiltroId } from './store.js';
 import { esc, dialogo, toast, fmtEUR, fmtFecha, fmtFechaDia, textoDias, etiquetaMetodo } from './util.js';
-import { hoyISO, creditos, estadoEfectivo, estadoPago, edad, camposPendientes } from './logica.js';
+import { hoyISO, creditos, estadoEfectivo, estadoPago, estadoCobro, edad, camposPendientes } from './logica.js';
 import { modalCliente, modalConvertir, modalBono, modalEditarBono, modalGenerar, modalSesion, cambiarEstadoSesion } from './modales.js';
 
 const ETIQUETA = { reservada: 'RESERV.', hecha: 'HECHA', no_vino: 'NO VINO', auto: 'AUTO' };
 
-function filtrados() {
+// Clientes que pasan todos los filtros salvo el de pago (sirve también para el contador de cobros).
+function base() {
   const f = entrenadorFiltroId();
   const t = S.cli.texto.trim().toLowerCase();
-  return S.clientes
-    .filter(c => (S.cli.archivados || c.activo)
-      && (!f || c.entrenador_id === f)
-      && (S.cli.estado === 'todos' || c.estado === S.cli.estado)
-      && (S.cli.origen === 'todos' || c.origen === S.cli.origen)
-      && (!S.cli.pendientes || camposPendientes(c).length > 0)
-      && (!t || `${nombreCompleto(c)} ${c.telefono || ''} ${c.email || ''}`.toLowerCase().includes(t)))
+  return S.clientes.filter(c => (S.cli.archivados || c.activo)
+    && (!f || c.entrenador_id === f)
+    && (S.cli.estado === 'todos' || c.estado === S.cli.estado)
+    && (S.cli.origen === 'todos' || c.origen === S.cli.origen)
+    && (!S.cli.pendientes || camposPendientes(c).length > 0)
+    && (!t || `${nombreCompleto(c)} ${c.telefono || ''} ${c.email || ''}`.toLowerCase().includes(t)));
+}
+function filtrados() {
+  const hoy = hoyISO();
+  return base()
+    .filter(c => S.cli.pago === 'todos' || estadoCobro(c, hoy)?.clave === S.cli.pago)
     .sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es'));
+}
+
+// «3 pendientes · 825 € por cobrar · 2 por renovar»: pulsando cada parte se filtra la lista.
+function cobrosHTML() {
+  const hoy = hoyISO();
+  let pend = 0, importe = 0, renovar = 0;
+  for (const c of base().filter(x => x.activo)) {
+    const e = estadoCobro(c, hoy);
+    if (e?.clave === 'pendiente') { pend++; importe += e.importe; } else if (e?.clave === 'renovar') renovar++;
+  }
+  if (!pend && !renovar) return '';
+  const boton = (v, txt) => `<button class="cobro-link" data-acc="filtro" data-k="pago" data-v="${v}">${txt}</button>`;
+  return `<div class="cobro-strip">💶 ${[
+    pend ? boton('pendiente', `<b>${pend}</b> pendiente${pend === 1 ? '' : 's'} · <b>${fmtEUR(importe)}</b> por cobrar`) : '',
+    renovar ? boton('renovar', `<b>${renovar}</b> por renovar`) : '',
+  ].filter(Boolean).join(' · ')}</div>`;
+}
+
+// Fila de pago de la lista: estado + fecha/importe (+ botón para marcar pagado, solo el administrador).
+const CHIP_COBRO = {
+  pendiente: ['pendiente', 'PENDIENTE DE PAGO'], programado: ['amarillo', 'PAGO PROGRAMADO'],
+  renovar: ['rojo', 'RENOVAR'], pagado: ['verde', 'PAGADO'],
+};
+function pagoHTML(c) {
+  const e = estadoCobro(c, hoyISO());
+  if (!e || e.clave === 'sin_bono') return '';
+  const [clase, texto] = CHIP_COBRO[e.clave];
+  const detalle = e.clave === 'renovar' ? `último bono ${fmtEUR(e.importe)}`
+    : `${e.clave === 'pendiente' ? 'vence' : 'pago'} ${fmtFecha(e.fecha)} · <b>${fmtEUR(e.importe)}</b>${e.n > 1 ? ` (${e.n} bonos)` : ''}`;
+  const boton = e.clave === 'pendiente' && esAdmin()
+    ? `<button class="btn btn-sm btn-cobrar" data-acc="cli-cobrar" data-id="${c.id}" title="Confirmar que se ha cobrado">✓ Marcar pagado</button>` : '';
+  return `<div class="pago-row"><span class="chip ${clase}">${texto}</span><span class="pago-txt">${detalle}</span>${boton}</div>`;
 }
 
 const chipsTipo = c => `
@@ -41,6 +78,7 @@ function itemHTML(c) {
     ${esAdmin() ? `<button class="item-borrar" data-acc="cli-borrar" data-id="${c.id}" title="Eliminar ficha" aria-label="Eliminar ficha">🗑</button>` : ''}
     <div class="client-name">${esc(nombreCompleto(c))}</div>
     <div class="chips">${chipsTipo(c)}${esAdmin() && !entrenadorFiltroId() ? `<span class="chip" style="border-color:${entrenadorDe(c.entrenador_id)?.color};color:${entrenadorDe(c.entrenador_id)?.color}">${esc(entrenadorDe(c.entrenador_id)?.nombre || '')}</span>` : ''}${c.activo ? '' : '<span class="chip gris">ARCHIVADO</span>'}${c.activo && camposPendientes(c).length ? '<span class="chip pendiente" title="Faltan datos por completar">INFO PENDIENTE</span>' : ''}</div>
+    ${pagoHTML(c)}
     ${extra}</div>`;
 }
 function listaHTML() {
@@ -72,6 +110,11 @@ function fichaHTML(c) {
     else if (cr.restantes === 0) alertas += '<div class="alert alert-danger">⚠ BONO AGOTADO — el cliente necesita renovar.</div>';
     else if (cr.restantes <= 2) alertas += `<div class="alert alert-warn">⚡ Solo quedan ${cr.restantes} sesión${cr.restantes === 1 ? '' : 'es'} — avisa al cliente.</div>`;
     if (cr.libres < 0) alertas += `<div class="alert alert-warn">Hay ${-cr.libres} sesión${cr.libres === -1 ? '' : 'es'} reservada${cr.libres === -1 ? '' : 's'} de más para los créditos que quedan.</div>`;
+    const cobro = estadoCobro(c, hoy);
+    if (cobro?.clave === 'pendiente') {
+      alertas += `<div class="alert alert-warn alert-flex"><span>💶 <b>PENDIENTE DE PAGO</b> — ${fmtEUR(cobro.importe)}${cobro.n > 1 ? ` (${cobro.n} bonos)` : ''}, con fecha de pago ${fmtFecha(cobro.fecha)}.</span>
+        ${esAdmin() ? `<button class="btn btn-sm btn-cobrar" data-acc="cli-cobrar" data-id="${c.id}">✓ Marcar pagado</button>` : ''}</div>`;
+    }
     for (const b of c.bonos || []) if (estadoPago(b, hoy) === 'programado') {
       alertas += `<div class="alert alert-info">💶 Pago programado el ${fmtFecha(b.fecha_pago)} (${fmtEUR(b.precio)}).</div>`;
     }
@@ -90,15 +133,22 @@ function fichaHTML(c) {
   if (efe) {
     const pct = cr.total > 0 ? Math.min(100, (cr.hechas / cr.total) * 100) : 0;
     const barColor = cr.restantes === 0 ? 'var(--red)' : cr.restantes <= 2 ? 'var(--yellow)' : 'var(--green-light)';
-    const bonos = [...(c.bonos || [])].sort((a, b) => b.fecha_pago.localeCompare(a.fecha_pago)).map(b => `
+    const CHIP_BONO = { pagado: ['verde', 'PAGADO'], pendiente: ['pendiente', 'PENDIENTE DE PAGO'], programado: ['amarillo', 'PAGO PROGRAMADO'] };
+    const bonos = [...(c.bonos || [])].sort((a, b) => b.fecha_pago.localeCompare(a.fecha_pago)).map(b => {
+      const e = estadoPago(b, hoy), [clase, texto] = CHIP_BONO[e];
+      return `
       <div class="bono-row">
         <span>${fmtFecha(b.fecha_pago)} · <b>${b.sesiones}</b> sesiones · ${fmtEUR(b.precio / b.sesiones)}/ses
-          <span class="chip ${estadoPago(b, hoy) === 'cobrado' ? 'verde' : 'amarillo'}">${estadoPago(b, hoy) === 'cobrado' ? 'COBRADO' : 'PAGO PROGRAMADO'}</span>
+          <span class="chip ${clase}">${texto}${e === 'pagado' ? ` ${fmtFecha(b.pagado_el).slice(0, 5)}` : ''}</span>
           ${b.metodo_pago ? `<span class="chip">${etiquetaMetodo(b.metodo_pago)}</span>` : ''}</span>
         <span><span style="color:var(--green-light)">${fmtEUR(b.precio)}</span>
+          ${esAdmin() ? (e === 'pagado'
+            ? `<button class="btn btn-sm btn-secondary" data-acc="bono-pagar" data-id="${b.id}" data-v="0" title="Volver a dejarlo sin confirmar">Deshacer pago</button>`
+            : `<button class="btn btn-sm btn-cobrar" data-acc="bono-pagar" data-id="${b.id}" data-v="1" title="Confirmar que se ha cobrado">✓ Marcar pagado</button>`) : ''}
           <button class="sess-del" data-acc="bono-editar" data-id="${b.id}" title="Editar bono">✎</button>
           <button class="sess-del" data-acc="bono-borrar" data-id="${b.id}" title="Eliminar bono">✕</button></span>
-      </div>`).join('') || '<span style="opacity:.4">Sin bonos</span>';
+      </div>`;
+    }).join('') || '<span style="opacity:.4">Sin bonos</span>';
 
     const cron = [...(c.sesiones || [])].sort((a, b) => a.fecha.localeCompare(b.fecha) || a.hora.localeCompare(b.hora));
     const numero = new Map();
@@ -179,8 +229,10 @@ export function renderClientes(el) {
         <input class="form-input" data-filtro-texto placeholder="Buscar nombre, teléfono, email…" value="${esc(texto)}">
         ${seg('estado', [['todos', 'Todos'], ['potencial', 'Potenciales'], ['efectivo', 'Clientes']])}
         ${seg('origen', [['todos', 'Todos'], ['codek', 'Codek'], ['externo', 'Externos']])}
+        ${seg('pago', [['todos', 'Pago: todos'], ['pendiente', 'Pendiente'], ['programado', 'Programado'], ['pagado', 'Pagado'], ['renovar', 'Renovar']])}
         <label class="check check-sm"><input type="checkbox" data-acc="cli-pendientes" ${S.cli.pendientes ? 'checked' : ''}> Solo con info pendiente</label>
         <label class="check check-sm"><input type="checkbox" data-acc="cli-archivados" ${S.cli.archivados ? 'checked' : ''}> Ver archivados</label>
+        <div data-cobros>${cobrosHTML()}</div>
         <div class="lista-items">${listaHTML()}</div>
       </aside>
       <section class="ficha">${c ? fichaHTML(c) : '<div class="empty-state"><div class="ico">🏋️</div><p>Selecciona una ficha</p><p style="font-size:9px;opacity:.4">o crea una nueva</p></div>'}</section>
@@ -192,6 +244,18 @@ export function alBuscar(valor) {
   S.cli.texto = valor;
   const cont = document.querySelector('.lista-items');
   if (cont) cont.innerHTML = listaHTML();
+  const cobros = document.querySelector('[data-cobros]');
+  if (cobros) cobros.innerHTML = cobrosHTML();
+}
+
+// Confirma el cobro (solo el administrador; la base de datos también lo impide a los demás).
+async function marcarPagados(bonos, mensaje) {
+  const ok = await dialogo({ titulo: 'Marcar como pagado', mensaje, ok: 'Sí, está pagado' });
+  if (!ok) return;
+  const hoy = hoyISO();
+  for (const b of bonos) await S.api.actualizarBono(b.id, { pagado_el: hoy });
+  await bus.recargar();
+  toast('Pago confirmado');
 }
 
 export const accionesClientes = {
@@ -200,6 +264,23 @@ export const accionesClientes = {
   'filtro': t => { S.cli[t.dataset.k] = t.dataset.v; bus.repintar(); },
   'cli-archivados': t => { S.cli.archivados = t.checked; bus.repintar(); },
   'cli-pendientes': t => { S.cli.pendientes = t.checked; bus.repintar(); },
+  'cli-cobrar': async t => {
+    const c = clienteDe(t.dataset.id);
+    const e = c && estadoCobro(c, hoyISO());
+    if (!esAdmin() || e?.clave !== 'pendiente') return;
+    await marcarPagados(e.bonos, `<p>¿Confirmas que <b>${esc(nombreCompleto(c))}</b> ha pagado <b>${fmtEUR(e.importe)}</b>${e.n > 1 ? ` (${e.n} bonos)` : ''}?</p>`);
+  },
+  'bono-pagar': async t => {
+    const c = clienteDe(S.cliSel);
+    const b = c?.bonos.find(x => x.id === t.dataset.id);
+    if (!esAdmin() || !b) return;
+    if (t.dataset.v === '1') return marcarPagados([b], `<p>¿Confirmas que <b>${esc(nombreCompleto(c))}</b> ha pagado el bono de <b>${fmtEUR(b.precio)}</b> (fecha de pago ${fmtFecha(b.fecha_pago)})?</p>`);
+    const ok = await dialogo({ titulo: 'Deshacer pago', mensaje: `<p>El bono de <b>${fmtEUR(b.precio)}</b> volverá a quedar sin confirmar. ¿Seguro?</p>`, ok: 'Deshacer pago' });
+    if (!ok) return;
+    await S.api.actualizarBono(b.id, { pagado_el: null });
+    await bus.recargar();
+    toast('Pago deshecho');
+  },
   'bono-editar': t => {
     const c = clienteDe(S.cliSel);
     const b = c?.bonos.find(x => x.id === t.dataset.id);

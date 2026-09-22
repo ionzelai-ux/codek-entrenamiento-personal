@@ -4,6 +4,7 @@ import {
   addDias, diaSemana, lunesDe, primerDiaMes, ultimoDiaMes, edad, normalizaUsuario, nombreUsuario,
   precioHoraSugerido, precioBonoSugerido, estadoEfectivo, creditos, estadoPago,
   solapan, buscarConflictos, generarFechas, repartirCarriles, agrupar, sumar, camposPendientes,
+  estadoCobro, facturacionMes,
 } from '../js/logica.js';
 
 test('fechas: lunes, día de la semana y meses', () => {
@@ -77,9 +78,54 @@ test('créditos: nunca negativos y libres puede indicar sobrereserva', () => {
   assert.equal(creditos({}).total, 0);
 });
 
-test('pago: cobrado si la fecha ya llegó, programado si es futura', () => {
-  assert.equal(estadoPago({ fecha_pago: '2026-09-19' }, '2026-09-19'), 'cobrado');
+test('pago: pendiente si la fecha llegó y nadie lo confirmó, programado si es futura, pagado si lo confirmó el admin', () => {
+  assert.equal(estadoPago({ fecha_pago: '2026-09-19' }, '2026-09-19'), 'pendiente');
+  assert.equal(estadoPago({ fecha_pago: '2026-09-01', pagado_el: null }, '2026-09-19'), 'pendiente');
   assert.equal(estadoPago({ fecha_pago: '2026-10-01' }, '2026-09-19'), 'programado');
+  assert.equal(estadoPago({ fecha_pago: '2026-09-01', pagado_el: '2026-09-03' }, '2026-09-19'), 'pagado');
+  assert.equal(estadoPago({ fecha_pago: '2026-10-01', pagado_el: '2026-09-15' }, '2026-09-19'), 'pagado', 'pagado por adelantado');
+});
+
+// Cliente efectivo con un bono de `n` sesiones y `hechas` ya realizadas
+const cliPago = (bonos, hechas = 0) => ({
+  estado: 'efectivo', bonos,
+  sesiones: Array.from({ length: hechas }, (_, i) => ({ fecha: `2026-08-${String(i + 1).padStart(2, '0')}`, hora: '10:00', estado: 'hecha' })),
+});
+const HOY = '2026-09-19', AHORA = new Date(2026, 8, 19, 12, 0);
+
+test('cobro del cliente: pendiente > programado > renovar > pagado', () => {
+  const pend = estadoCobro(cliPago([{ sesiones: 8, precio: 275, fecha_pago: '2026-09-01' }], 2), HOY, AHORA);
+  assert.deepEqual([pend.clave, pend.importe, pend.fecha, pend.n], ['pendiente', 275, '2026-09-01', 1]);
+
+  const prog = estadoCobro(cliPago([{ sesiones: 8, precio: 275, fecha_pago: '2026-10-01' }]), HOY, AHORA);
+  assert.deepEqual([prog.clave, prog.importe, prog.fecha], ['programado', 275, '2026-10-01']);
+
+  const ok = estadoCobro(cliPago([{ sesiones: 8, precio: 275, fecha_pago: '2026-09-01', pagado_el: '2026-09-02' }], 3), HOY, AHORA);
+  assert.deepEqual([ok.clave, ok.importe], ['pagado', 275]);
+
+  const renovar = estadoCobro(cliPago([{ sesiones: 8, precio: 275, fecha_pago: '2026-09-01', pagado_el: '2026-09-02' }], 6), HOY, AHORA);
+  assert.equal(renovar.clave, 'renovar', 'quedan 2 → toca renovar');
+  assert.equal(renovar.importe, 275, 'con el importe del último bono como referencia');
+  assert.equal(estadoCobro(cliPago([{ sesiones: 8, precio: 275, fecha_pago: '2026-09-01', pagado_el: '2026-09-02' }], 5), HOY, AHORA).clave, 'pagado', 'quedan 3 → todavía no');
+  assert.equal(estadoCobro(cliPago([{ sesiones: 8, precio: 275, fecha_pago: '2026-09-01', pagado_el: '2026-09-02' }], 8), HOY, AHORA).clave, 'renovar', 'agotado');
+});
+
+test('cobro del cliente: varios pendientes se suman; sin bono; potencial no aplica', () => {
+  const dos = estadoCobro(cliPago([
+    { sesiones: 8, precio: 275, fecha_pago: '2026-08-01' }, { sesiones: 8, precio: 275, fecha_pago: '2026-09-01' },
+  ]), HOY, AHORA);
+  assert.deepEqual([dos.clave, dos.importe, dos.fecha, dos.n], ['pendiente', 550, '2026-08-01', 2]);
+  assert.equal(estadoCobro(cliPago([]), HOY, AHORA).clave, 'sin_bono');
+  assert.equal(estadoCobro({ estado: 'potencial', bonos: [] }, HOY, AHORA), null);
+});
+
+test('cobro del cliente: si ya hay un bono nuevo programado no se pide renovar; un pendiente manda sobre todo', () => {
+  const renovado = estadoCobro(cliPago([
+    { sesiones: 8, precio: 275, fecha_pago: '2026-09-01', pagado_el: '2026-09-02' }, { sesiones: 8, precio: 275, fecha_pago: '2026-10-01' },
+  ], 7), HOY, AHORA);
+  assert.equal(renovado.clave, 'programado');
+  const debe = estadoCobro(cliPago([{ sesiones: 8, precio: 275, fecha_pago: '2026-09-01' }], 7), HOY, AHORA);
+  assert.equal(debe.clave, 'pendiente', 'aunque queden pocas sesiones, primero se cobra');
 });
 
 test('solapes: mismo día y franjas que se pisan', () => {
@@ -149,15 +195,39 @@ test('info pendiente: un potencial necesita sesiones, veces por semana e importe
   assert.deepEqual(camposPendientes({ ...pot, pot_sesiones_bono: 8, pot_veces_semana: 2, pot_precio: 0 }), ['importe estimado']);
 });
 
-test('resumen: cobrado, programado y estimado por entrenador', () => {
+test('resumen: cobrado (confirmado), pendiente, programado y estimado por entrenador', () => {
   const cl = [
-    { entrenador_id: 'e1', activo: true, estado: 'efectivo', bonos: [{ fecha_pago: '2026-09-05', precio: 300 }, { fecha_pago: '2026-09-25', precio: 100 }, { fecha_pago: '2026-08-05', precio: 999 }] },
+    { entrenador_id: 'e1', activo: true, estado: 'efectivo', bonos: [
+      { fecha_pago: '2026-09-05', precio: 300, pagado_el: '2026-09-06' },   // pagado
+      { fecha_pago: '2026-09-10', precio: 50 },                             // pendiente (ya llegó, sin confirmar)
+      { fecha_pago: '2026-09-25', precio: 100 },                            // programado
+      { fecha_pago: '2026-08-05', precio: 999 }] },                         // otro mes
     { entrenador_id: 'e1', activo: true, estado: 'potencial', pot_precio: 336, bonos: [] },
     { entrenador_id: 'e2', activo: false, estado: 'potencial', pot_precio: 500, bonos: [] },
     { entrenador_id: 'e2', activo: true, estado: 'efectivo', bonos: [] },
   ];
   const g = agrupar(cl, c => c.entrenador_id, '2026-09', '2026-09-19');
-  assert.deepEqual(g.get('e1'), { efectivos: 1, potenciales: 1, cobrado: 300, programado: 100, estimado: 336 });
-  assert.deepEqual(g.get('e2'), { efectivos: 1, potenciales: 0, cobrado: 0, programado: 0, estimado: 0 });
-  assert.deepEqual(sumar(g.values()), { efectivos: 2, potenciales: 1, cobrado: 300, programado: 100, estimado: 336 });
+  assert.deepEqual(g.get('e1'), { efectivos: 1, potenciales: 1, cobrado: 300, pendiente: 50, programado: 100, estimado: 336 });
+  assert.deepEqual(g.get('e2'), { efectivos: 1, potenciales: 0, cobrado: 0, pendiente: 0, programado: 0, estimado: 0 });
+  assert.deepEqual(sumar(g.values()), { efectivos: 2, potenciales: 1, cobrado: 300, pendiente: 50, programado: 100, estimado: 336 });
+});
+
+test('facturación prevista: este mes y el siguiente según las fechas de pago', () => {
+  const cl = [
+    { id: 'a', bonos: [
+      { id: 1, fecha_pago: '2026-09-05', precio: 300, pagado_el: '2026-09-06' },
+      { id: 2, fecha_pago: '2026-09-28', precio: 100.5 },
+      { id: 3, fecha_pago: '2026-10-01', precio: 275 }] },
+    { id: 'b', bonos: [
+      { id: 4, fecha_pago: '2026-09-12', precio: 50 },
+      { id: 5, fecha_pago: '2026-10-15', precio: 40, pagado_el: '2026-09-18' },
+      { id: 6, fecha_pago: '2026-11-01', precio: 999 }] },
+  ];
+  const sep = facturacionMes(cl, '2026-09', '2026-09-19');
+  assert.deepEqual([sep.total, sep.pagado, sep.pendiente, sep.programado], [450.5, 300, 50, 100.5]);
+  assert.deepEqual(sep.filas.map(f => f.bono.id), [1, 4, 2], 'ordenadas por fecha de pago');
+  assert.deepEqual(sep.filas.map(f => f.estado), ['pagado', 'pendiente', 'programado']);
+  const oct = facturacionMes(cl, '2026-10', '2026-09-19');
+  assert.deepEqual([oct.total, oct.pagado, oct.pendiente, oct.programado], [315, 40, 0, 275]);
+  assert.equal(facturacionMes(cl, '2026-12', '2026-09-19').total, 0);
 });
