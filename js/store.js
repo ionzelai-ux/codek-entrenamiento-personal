@@ -13,6 +13,9 @@ export const S = {
   cal: { modo: 'semana', fecha: hoyISO(), sesiones: [] },
   cli: { estado: 'todos', origen: 'todos', pago: 'todos', texto: '', archivados: false, pendientes: false },
   resumenMes: hoyISO().slice(0, 7),
+  comisiones: {                  // liquidación de comisiones (solo admin)
+    mes: hoyISO().slice(0, 7), config: null, overrides: new Map(), cargando: false, cargado: false,
+  },
   ah: {                          // panel de AimHarder (solo admin)
     fecha: hoyISO(), estado: null, dia: null, error: '', cargando: false,
     pfecha: '2026-09-21', phora: '11:00', pruebas: null, pruebasCargadas: false, prueba: null, diag: null,

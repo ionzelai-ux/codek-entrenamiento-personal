@@ -87,3 +87,17 @@ export async function actualizarSesion(id, cambios) {
   return comprobar(await sb.from('sesiones').update(cambios).eq('id', id).select().single());
 }
 export async function eliminarSesion(id) { comprobar(await sb.from('sesiones').delete().eq('id', id)); }
+
+// ── Comisiones (solo administrador; la base de datos también lo impone) ────
+export async function obtenerConfigComisiones() {
+  return comprobar(await sb.from('comisiones_config').select('*').eq('id', 1).maybeSingle());
+}
+export async function guardarConfigComisiones(cambios) {
+  const { comision_codek, comision_externo, iva_pct, ss_pct } = cambios;
+  return comprobar(await sb.from('comisiones_config').upsert({ id: 1, comision_codek, comision_externo, iva_pct, ss_pct }).select().single());
+}
+export async function listarOverridesComisiones() { return comprobar(await sb.from('comisiones_bono').select('*')); }
+// Upsert parcial: solo se guarda lo que cambia (ver sql/08_comisiones.sql), el otro campo del bono no se toca.
+export async function guardarOverrideComision(bono_id, cambios) {
+  return comprobar(await sb.from('comisiones_bono').upsert({ bono_id, ...cambios }, { onConflict: 'bono_id' }).select().single());
+}

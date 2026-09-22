@@ -203,3 +203,72 @@ export function facturacionMes(clientes, mes, hoy = hoyISO()) {
   for (const k of Object.keys(t)) t[k] = Math.round(t[k] * 100) / 100;
   return { mes, ...t, filas };
 }
+
+// ── Liquidación de comisiones de los entrenadores ─────────────────────────
+// Condiciones pactadas con Jon (editables desde la pantalla, se guardan en comisiones_config):
+//   · % de comisión sobre el importe del bono: uno si el cliente es de origen Codek, otro si lo trajo el
+//     propio entrenador ("externo").
+//   · Si el pago del cliente está declarado (fiscalmente, como tarjeta/transferencia), antes se le quita el
+//     IVA: importe ÷ (1 + iva/100). Ojo: es una DIVISIÓN (para sacar la base de un importe que YA lleva el
+//     IVA dentro), no "quitar el 21%" multiplicando por 0,79 — son cálculos distintos.
+//   · Si a el entrenador se le va a pagar por nómina, se hace la misma división con el % de Seguridad Social,
+//     sobre lo que quede tras el paso anterior (en cascada, no sobre el importe original).
+//   · El % de comisión se aplica al final, sobre la base ya reducida.
+export const DEFAULT_CONFIG_COMISIONES = { comision_codek: 40, comision_externo: 60, iva_pct: 21, ss_pct: 35 };
+
+// Por defecto se considera "declarado" (tarjeta o transferencia) salvo que se indique lo contrario a mano;
+// un pago en efectivo empieza como "no declarado", pero Jon puede marcarlo como declarado igualmente
+// (porque piensa declararlo aunque el cliente pagara en mano).
+export const esDeclaradoPorDefecto = metodoPago => metodoPago === 'tarjeta' || metodoPago === 'transferencia';
+
+// `override` = { declarado, pago_entrenador } guardado a mano para ESE bono (o null si no se ha tocado).
+export function comisionBono(bono, origen, config, override = null) {
+  const declarado = override?.declarado ?? esDeclaradoPorDefecto(bono.metodo_pago);
+  const pagoEntrenador = override?.pago_entrenador || 'efectivo';
+  let base = Number(bono.precio) || 0;
+  if (declarado) base = base / (1 + (Number(config.iva_pct) || 0) / 100);
+  if (pagoEntrenador === 'nomina') base = base / (1 + (Number(config.ss_pct) || 0) / 100);
+  const pct = origen === 'codek' ? Number(config.comision_codek) || 0 : Number(config.comision_externo) || 0;
+  return { declarado, pagoEntrenador, pct, base, comision: base * (pct / 100) };
+}
+
+// Bonos que se liquidan en `mes` ('YYYY-MM'): los que Jon confirmó como pagados con esa fecha
+// (bono.pagado_el), no la fecha de pago prevista — se liquida sobre dinero ya cobrado de verdad.
+export function bonosLiquidablesMes(clientes, mes) {
+  const filas = [];
+  for (const c of clientes) {
+    for (const b of c.bonos || []) {
+      if (b.pagado_el && String(b.pagado_el).slice(0, 7) === mes) filas.push({ cliente: c, bono: b });
+    }
+  }
+  const nombreCli = c => `${c.nombre} ${c.apellidos || ''}`.trim();   // evita depender de store.js (circular)
+  filas.sort((a, b) => a.bono.pagado_el.localeCompare(b.bono.pagado_el) || nombreCli(a.cliente).localeCompare(nombreCli(b.cliente), 'es'));
+  return filas;
+}
+
+// `overridesPorBono` = { [bono_id]: { declarado, pago_entrenador } }
+export function liquidacionMes(clientes, mes, config, overridesPorBono = {}) {
+  return bonosLiquidablesMes(clientes, mes).map(({ cliente, bono }) => ({
+    cliente, bono, ...comisionBono(bono, cliente.origen, config, overridesPorBono[bono.id] || null),
+  }));
+}
+
+export function totalesComisiones(filas) {
+  const t = { importe: 0, comision: 0, efectivo: 0, nomina: 0, n: filas.length };
+  for (const f of filas) {
+    t.importe += Number(f.bono.precio) || 0;
+    t.comision += f.comision;
+    t[f.pagoEntrenador] += f.comision;
+  }
+  return t;
+}
+
+export function agruparComisionesPorEntrenador(filas) {
+  const g = new Map();
+  for (const f of filas) {
+    const k = f.cliente.entrenador_id;
+    if (!g.has(k)) g.set(k, []);
+    g.get(k).push(f);
+  }
+  return g;
+}

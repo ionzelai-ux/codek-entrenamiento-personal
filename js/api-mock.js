@@ -1,6 +1,6 @@
 // Modo demo (abre la app con ?demo): mismos métodos que api.js pero en memoria,
 // con datos ficticios y sin tocar Supabase. Usuarios: admin / eduardo / jesus · clave: demo
-import { hoyISO, addDias, lunesDe, nombreUsuario } from './logica.js';
+import { hoyISO, addDias, lunesDe, nombreUsuario, DEFAULT_CONFIG_COMISIONES } from './logica.js';
 
 let seq = 1;
 const nuevoId = () => 'demo-' + seq++;
@@ -40,7 +40,7 @@ function sesion(c, fecha, hora, estado = 'reservada') {
   sesion(luis, addDias(lun, 3), '17:30');
   cliente({ entrenador_id: 'p-edu', nombre: 'Marta', apellidos: 'Prueba', estado: 'potencial', origen: 'codek', pot_sesiones_bono: 8, pot_veces_semana: 2, pot_precio: 336, email: 'marta@ejemplo.com' });
   const pablo = cliente({ entrenador_id: 'p-jes', nombre: 'Pablo', apellidos: 'Demo Sanz', estado: 'efectivo', origen: 'externo', dias_fijos: [{ dia: 1, hora: '10:00' }, { dia: 4, hora: '19:00' }] });
-  bono(pablo, 16, 608, addDias(lun, -3), addDias(lun, -3), 'efectivo');
+  bono(pablo, 16, 608, addDias(lun, -3), addDias(lun, -3), 'efectivo', addDias(lun, -2));   // pagado, para probar comisiones
   sesion(pablo, addDias(lun, 0), '10:00');
   sesion(pablo, addDias(lun, 3), '19:00');
   cliente({ entrenador_id: 'p-jes', nombre: 'Lucía', apellidos: 'Ejemplo', estado: 'potencial', origen: 'externo', pot_sesiones_bono: 12, pot_veces_semana: 3, pot_precio: 480 });
@@ -168,6 +168,31 @@ export async function actualizarBono(id, cambios) {
   return clonar(b);
 }
 export async function eliminarBono(id) { bonos.splice(bonos.findIndex(b => b.id === id), 1); }
+
+// ── Comisiones (como la RLS real: solo el administrador puede ver o tocar esto) ──
+const SOLO_ADMIN_COMISION = 'Solo el administrador puede ver las comisiones';
+let comisionesConfig = { ...DEFAULT_CONFIG_COMISIONES };
+const comisionesBono = [];
+export async function obtenerConfigComisiones() {
+  if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
+  return clonar(comisionesConfig);
+}
+export async function guardarConfigComisiones(cambios) {
+  if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
+  Object.assign(comisionesConfig, cambios);
+  return clonar(comisionesConfig);
+}
+export async function listarOverridesComisiones() {
+  if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
+  return comisionesBono.map(clonar);
+}
+export async function guardarOverrideComision(bono_id, cambios) {
+  if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
+  let o = comisionesBono.find(x => x.bono_id === bono_id);
+  if (!o) { o = { bono_id, declarado: null, pago_entrenador: 'efectivo' }; comisionesBono.push(o); }
+  Object.assign(o, cambios);
+  return clonar(o);
+}
 
 export async function sesionesEntre(desde, hasta, entrenadorId = null) {
   const ids = idsVisibles();

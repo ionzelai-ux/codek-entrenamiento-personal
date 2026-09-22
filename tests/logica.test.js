@@ -5,6 +5,8 @@ import {
   precioHoraSugerido, precioBonoSugerido, estadoEfectivo, creditos, estadoPago,
   solapan, buscarConflictos, generarFechas, repartirCarriles, agrupar, sumar, camposPendientes,
   estadoCobro, facturacionMes,
+  comisionBono, esDeclaradoPorDefecto, bonosLiquidablesMes, liquidacionMes, totalesComisiones, agruparComisionesPorEntrenador,
+  DEFAULT_CONFIG_COMISIONES,
 } from '../js/logica.js';
 
 test('fechas: lunes, día de la semana y meses', () => {
@@ -230,4 +232,87 @@ test('facturación prevista: este mes y el siguiente según las fechas de pago',
   const oct = facturacionMes(cl, '2026-10', '2026-09-19');
   assert.deepEqual([oct.total, oct.pagado, oct.pendiente, oct.programado], [315, 40, 0, 275]);
   assert.equal(facturacionMes(cl, '2026-12', '2026-09-19').total, 0);
+});
+
+// ── Comisiones de los entrenadores ──────────────────────────────────────────
+const cerca = (a, b, msg) => assert.ok(Math.abs(a - b) < 0.005, `${msg}: ${a} ≈ ${b}`);
+
+test('declarado por defecto: tarjeta y transferencia sí, efectivo no', () => {
+  assert.equal(esDeclaradoPorDefecto('tarjeta'), true);
+  assert.equal(esDeclaradoPorDefecto('transferencia'), true);
+  assert.equal(esDeclaradoPorDefecto('efectivo'), false);
+  assert.equal(esDeclaradoPorDefecto(undefined), false);
+});
+
+test('comisión de un bono: cliente Codek con tarjeta, pagado en nómina (ejemplo de Jon)', () => {
+  // 336 € ÷ 1,21 = 277,685950... ÷ 1,35 = 205,693296... × 40% = 82,277318...
+  const r = comisionBono({ precio: 336, metodo_pago: 'tarjeta' }, 'codek', DEFAULT_CONFIG_COMISIONES, { pago_entrenador: 'nomina' });
+  assert.equal(r.declarado, true);
+  assert.equal(r.pagoEntrenador, 'nomina');
+  assert.equal(r.pct, 40);
+  cerca(r.base, 205.693296, 'base tras IVA y Seguridad Social');
+  cerca(r.comision, 82.277318, 'comisión');
+});
+
+test('comisión de un bono: mismo caso pero pagado en efectivo (sin descuento de Seguridad Social)', () => {
+  // 336 € ÷ 1,21 = 277,685950... × 40% = 111,074380...
+  const r = comisionBono({ precio: 336, metodo_pago: 'tarjeta' }, 'codek', DEFAULT_CONFIG_COMISIONES);
+  assert.equal(r.pagoEntrenador, 'efectivo', 'sin override, por defecto efectivo');
+  cerca(r.base, 277.685950, 'base tras IVA, sin Seguridad Social');
+  cerca(r.comision, 111.074380, 'comisión');
+});
+
+test('comisión de un bono: cliente externo en efectivo, sin declarar (comisión más alta, sin descuentos)', () => {
+  const r = comisionBono({ precio: 480, metodo_pago: 'efectivo' }, 'externo', DEFAULT_CONFIG_COMISIONES);
+  assert.equal(r.declarado, false);
+  assert.equal(r.pct, 60);
+  assert.equal(r.base, 480, 'sin IVA porque no está declarado');
+  assert.equal(r.comision, 288, '480 × 60%');
+});
+
+test('comisión de un bono: Jon puede tratar un pago en efectivo como declarado aunque el método real sea efectivo', () => {
+  // 480 € ÷ 1,21 = 396,694214... × 60% = 238,016528...
+  const r = comisionBono({ precio: 480, metodo_pago: 'efectivo' }, 'externo', DEFAULT_CONFIG_COMISIONES, { declarado: true });
+  assert.equal(r.declarado, true);
+  cerca(r.base, 396.694214, 'base tras IVA aunque el método real sea efectivo');
+  cerca(r.comision, 238.016528, 'comisión');
+});
+
+test('bonos liquidables de un mes: solo los confirmados como pagados ese mes, ordenados por fecha de confirmación', () => {
+  const cl = [
+    { nombre: 'Zoe', apellidos: '', origen: 'codek', bonos: [{ id: 1, precio: 100, pagado_el: '2026-09-05' }, { id: 2, precio: 50, pagado_el: '2026-08-20' }] },
+    { nombre: 'Ana', apellidos: '', origen: 'externo', bonos: [{ id: 3, precio: 200, pagado_el: '2026-09-02' }, { id: 4, precio: 80 }] },   // sin confirmar
+  ];
+  const filas = bonosLiquidablesMes(cl, '2026-09');
+  assert.deepEqual(filas.map(f => f.bono.id), [3, 1], 'por fecha de confirmación, no por nombre');
+});
+
+test('liquidación de un mes: aplica los overrides guardados por bono y dedup por id', () => {
+  const cl = [
+    { entrenador_id: 'edu', nombre: 'Pablo', apellidos: '', origen: 'externo', bonos: [{ id: 'b1', precio: 480, metodo_pago: 'efectivo', pagado_el: '2026-09-18' }] },
+  ];
+  const sinOverride = liquidacionMes(cl, '2026-09', DEFAULT_CONFIG_COMISIONES);
+  assert.equal(sinOverride[0].comision, 288);
+  const conOverride = liquidacionMes(cl, '2026-09', DEFAULT_CONFIG_COMISIONES, { b1: { declarado: true, pago_entrenador: 'nomina' } });
+  // 480 ÷ 1,21 = 396,694214... ÷ 1,35 = 293,847566... × 60% = 176,308539...
+  cerca(conOverride[0].comision, 176.308539, 'con declarado + nómina');
+});
+
+test('totales: importe, comisión y desglose efectivo/nómina', () => {
+  const filas = [
+    { bono: { precio: 300 }, comision: 120, pagoEntrenador: 'efectivo' },
+    { bono: { precio: 200 }, comision: 74, pagoEntrenador: 'nomina' },
+  ];
+  assert.deepEqual(totalesComisiones(filas), { importe: 500, comision: 194, efectivo: 120, nomina: 74, n: 2 });
+});
+
+test('agrupar por entrenador: cada fila va con su entrenador', () => {
+  const filas = [
+    { cliente: { entrenador_id: 'edu' }, comision: 10 },
+    { cliente: { entrenador_id: 'jes' }, comision: 20 },
+    { cliente: { entrenador_id: 'edu' }, comision: 5 },
+  ];
+  const g = agruparComisionesPorEntrenador(filas);
+  assert.equal(g.get('edu').length, 2);
+  assert.equal(g.get('jes').length, 1);
 });

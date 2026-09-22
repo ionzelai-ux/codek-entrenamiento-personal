@@ -2,16 +2,19 @@
 import { SUPABASE_ANON_KEY } from './config.js';
 import { S, bus, esAdmin, clienteDe } from './store.js';
 import { esc, toast } from './util.js';
+import { hoyISO } from './logica.js';
 import { renderCalendario, cargarCalendario, accionesCalendario, iniciarArrastre } from './vista-calendario.js';
 import { renderClientes, alBuscar, accionesClientes } from './vista-clientes.js';
 import { renderResumen, accionesResumen } from './vista-resumen.js';
+import { renderComisiones, cargarComisiones, accionesComisiones, alCambiarConfig } from './vista-comisiones.js';
 import { renderAimHarder, accionesAimHarder } from './vista-aimharder.js';
 
 const DEMO = new URLSearchParams(location.search).has('demo');
 const $ = id => document.getElementById(id);
 const vistaEl = $('vista');
 
-const VISTAS = { calendario: renderCalendario, clientes: renderClientes, resumen: renderResumen, aimharder: renderAimHarder };
+const VISTAS = { calendario: renderCalendario, clientes: renderClientes, resumen: renderResumen, comisiones: renderComisiones, aimharder: renderAimHarder };
+const SOLO_ADMIN = ['resumen', 'comisiones', 'aimharder'];
 const pintar = () => VISTAS[S.vista](vistaEl);
 
 bus.repintar = pintar;
@@ -23,7 +26,7 @@ bus.recargar = async () => {
 // ── Cabecera ──────────────────────────────────────────────────────────────
 function pintarCabecera() {
   const admin = esAdmin();
-  const tabs = [['calendario', 'Calendario'], ['clientes', 'Clientes'], ...(admin ? [['resumen', 'Resumen'], ['aimharder', 'AimHarder']] : [])];
+  const tabs = [['calendario', 'Calendario'], ['clientes', 'Clientes'], ...(admin ? [['resumen', 'Resumen'], ['comisiones', 'Comisiones'], ['aimharder', 'AimHarder']] : [])];
   $('nav').innerHTML = tabs.map(([v, l]) =>
     `<button class="nav-tab ${S.vista === v ? 'active' : ''}" data-acc="vista" data-v="${v}">${l}</button>`).join('');
   const selector = admin && S.vista !== 'resumen' && S.vista !== 'aimharder'
@@ -38,19 +41,22 @@ function pintarCabecera() {
 
 const GLOBALES = {
   vista: t => {
-    if ((t.dataset.v === 'resumen' || t.dataset.v === 'aimharder') && !esAdmin()) return;
+    if (SOLO_ADMIN.includes(t.dataset.v) && !esAdmin()) return;
     S.vista = t.dataset.v;
     pintarCabecera();
-    return S.vista === 'calendario' ? cargarCalendario() : pintar();
+    if (S.vista === 'calendario') return cargarCalendario();
+    if (S.vista === 'comisiones') return cargarComisiones();
+    return pintar();
   },
   salir: async () => {
     await S.api.cerrarSesion();
     Object.assign(S, { perfil: null, clientes: [], entrenadores: [], cliSel: null, filtroEntr: 'todos' });
+    S.comisiones = { mes: hoyISO().slice(0, 7), config: null, overrides: new Map(), cargando: false, cargado: false };
     vistaEl.innerHTML = '';
     mostrarLogin();
   },
 };
-const ACCIONES = { ...GLOBALES, ...accionesCalendario, ...accionesClientes, ...accionesResumen, ...accionesAimHarder };
+const ACCIONES = { ...GLOBALES, ...accionesCalendario, ...accionesClientes, ...accionesResumen, ...accionesComisiones, ...accionesAimHarder };
 
 document.addEventListener('click', async e => {
   const t = e.target.closest('[data-acc]');
@@ -59,7 +65,10 @@ document.addEventListener('click', async e => {
   if (!fn) return;
   try { await fn(t, e); } catch (err) { toast(err.message || 'Error inesperado', true); }
 });
-document.addEventListener('input', e => { if (e.target.matches('[data-filtro-texto]')) alBuscar(e.target.value); });
+document.addEventListener('input', e => {
+  if (e.target.matches('[data-filtro-texto]')) alBuscar(e.target.value);
+  if (e.target.matches('[data-cfg]')) alCambiarConfig(e.target);
+});
 document.addEventListener('change', async e => {
   if (e.target.id !== 'selEntr') return;
   S.filtroEntr = e.target.value;

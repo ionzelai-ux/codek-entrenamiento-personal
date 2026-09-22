@@ -16,7 +16,7 @@ js/logica.js          lógica pura (créditos, tarifas, solapes, días fijos…)
 js/api.js             acceso a Supabase (login, clientes, bonos, sesiones)
 js/api-mock.js        modo demo en memoria (?demo)
 js/app.js             arranque, login, navegación
-js/vista-*.js         calendario · clientes · resumen (admin)
+js/vista-*.js         calendario · clientes · resumen · comisiones (admin)
 js/modales.js         formularios: sesión, ficha, bono, convertir, generar sesiones
 sql/                  scripts para Supabase (ejecutar en orden)
 tests/                node --test tests/*.test.js
@@ -107,3 +107,10 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   un bono nuevo, se marca «RENOVAR» con el importe del último bono como referencia.
 - **Resumen → Facturación prevista**: la fecha de pago de cada bono decide en qué mes cuenta; muestra el total de
   este mes y del siguiente, desglosado en pagado / pendiente de cobro / programado, con el detalle de cada bono.
+- **Comisiones** (pestaña solo del administrador; `sql/08_comisiones.sql`): liquidación mensual de lo que se le paga
+  a cada entrenador, sobre los bonos que el administrador confirmó como pagados ese mes. Por cada bono:
+  importe del bono → si se trata como *declarado* (por defecto, tarjeta/transferencia; se puede forzar a mano) se
+  divide entre 1 + IVA/100 → si a el entrenador se le paga en *nómina* (elegible por bono) se divide otra vez, sobre
+  lo anterior, entre 1 + Seguridad Social/100 → sobre esa base se aplica el % de comisión según el origen del cliente
+  (Codek o traído por el propio entrenador). Los cuatro porcentajes son editables y recalculan al momento, como una
+  hoja de cálculo; el trato de cada bono y los porcentajes se guardan para la próxima vez.

@@ -285,6 +285,29 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
 .tabla-prev td { padding: 7px 8px; font-size: 12px; }
 .prev-entr { font-family: var(--mono); font-size: 9px; letter-spacing: 1px; margin-left: 4px; }
 
+/* Comisiones */
+.cfg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.cfg-campo { display: flex; flex-direction: column; gap: 6px; }
+.cfg-campo span:first-child { font-family: var(--mono); font-size: 10px; letter-spacing: 1px; color: var(--muted); }
+.cfg-input { display: flex; align-items: center; border: 1px solid var(--border); background: var(--panel); }
+.cfg-input input { border: none; background: none; padding: 9px 4px 9px 11px; color: var(--text); font-family: var(--mono); font-size: 14px; width: 100%; }
+.cfg-input input:focus { outline: 1px solid var(--red); }
+.cfg-input span { padding-right: 11px; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+.cfg-acciones { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.seg-inline { display: inline-flex; width: auto; }
+.seg-inline button { flex: none; padding: 5px 9px; }
+.tabla-com th, .tabla-com td { white-space: nowrap; }
+.tabla-com .check { white-space: nowrap; }
+.com-grupo { margin-bottom: 22px; }
+.com-grupo-title { font-family: var(--display); font-size: 20px; letter-spacing: 2px; display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.com-grupo-title .tc { width: 11px; height: 11px; }
+.com-grupo-total { margin-left: auto; color: var(--green-light); font-family: var(--mono); font-size: 16px; }
+.com-subtotal { font-family: var(--mono); font-size: 11px; color: var(--muted); padding: 8px 2px 0; text-align: right; }
+.com-subtotal b { color: var(--text); }
+.com-total-general { display: flex; justify-content: space-between; align-items: baseline; font-family: var(--display); font-size: 22px; letter-spacing: 2px;
+  color: var(--red); border-top: 3px solid var(--red); padding-top: 14px; margin-top: 6px; }
+.com-total-general span { font-size: 34px; color: var(--green-light); }
+
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--dark); }
 ::-webkit-scrollbar-thumb { background: var(--red-dark); }
@@ -293,7 +316,7 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
 @media (max-width: 860px) {
   header { padding: 8px 12px; gap: 8px; }
   .nav-tabs { margin-left: 0; order: 3; width: 100%; }
-  .nav-tab { flex: 1; padding: 8px 6px; letter-spacing: 1px; }
+  .nav-tab { flex: 1; min-width: 0; padding: 8px 4px; letter-spacing: 0.5px; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .header-der { margin-left: auto; gap: 8px; }
   .sel-entr { min-width: 0; max-width: 150px; }
   .user-chip { display: none; }
