@@ -304,6 +304,10 @@ export function modalCliente(cliente = null) {
           <select class="form-input" name="entrenador_id">${S.entrenadores.map(e =>
             `<option value="${e.id}" ${e.id === entrPorDefecto ? 'selected' : ''}>${esc(e.nombre)}</option>`).join('')}</select></div>` : '<div></div>'}
       </div>
+      <div class="form-group"><label class="form-label">⚕ Lesiones o limitaciones físicas</label>
+        <textarea class="form-input" name="lesiones" rows="2" placeholder="Escribe «Ninguna» si no tiene ninguna">${esc(c.lesiones)}</textarea>
+        <div class="hint">Se le mostrará en rojo al entrenador en la ficha, para que la vea antes de entrenarle.</div></div>
+
       <div class="form-row">
         <div class="form-group"><label class="form-label">Tipo *</label>
           ${edit ? `<div class="chip-fijo">${c.estado === 'efectivo' ? 'Cliente' : 'Potencial'}</div>`
@@ -335,7 +339,7 @@ export function modalCliente(cliente = null) {
       </div>
 
       <div class="form-group"><label class="form-label">Notas</label>
-        <input class="form-input" name="notas" type="text" value="${esc(c.notas)}" placeholder="Objetivo, lesiones..."></div>
+        <input class="form-input" name="notas" type="text" value="${esc(c.notas)}" placeholder="Objetivo, preferencias..."></div>
       ${acciones('Guardar')}
     </form>`, 'modal-lg');
 
@@ -397,7 +401,7 @@ export function modalCliente(cliente = null) {
 
     const datos = {
       nombre: v('nombre'), apellidos: v('apellidos'), telefono: v('telefono') || null, email: v('email') || null,
-      fecha_nacimiento: v('fecha_nacimiento') || null, origen, notas: v('notas') || null,
+      fecha_nacimiento: v('fecha_nacimiento') || null, origen, notas: v('notas') || null, lesiones: v('lesiones') || null,
     };
     if (!edit || admin) datos.entrenador_id = entrenador_id;
     if (estado === 'potencial') {

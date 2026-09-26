@@ -30,11 +30,12 @@ function sesion(c, fecha, hora, estado = 'reservada') {
 (function sembrar() {
   const hoy = hoyISO(), lun = lunesDe(hoy);
   const ana = cliente({ entrenador_id: 'p-edu', nombre: 'Ana', apellidos: 'Demo Ruiz', estado: 'efectivo', origen: 'codek',
-    fecha_nacimiento: '1988-04-12', telefono: '600 000 001', dias_fijos: [{ dia: 1, hora: '10:00' }, { dia: 3, hora: '10:00' }] });
+    fecha_nacimiento: '1988-04-12', telefono: '600 000 001', lesiones: 'Molestia en el hombro derecho: nada de press por encima de la cabeza',
+    dias_fijos: [{ dia: 1, hora: '10:00' }, { dia: 3, hora: '10:00' }] });
   bono(ana, 8, 336, addDias(lun, -10), addDias(lun, -10), 'tarjeta', addDias(lun, -9));   // pagado
   [-7, -5].forEach(n => sesion(ana, addDias(lun, n), '10:00', 'hecha'));
   [0, 2, 7].forEach(n => sesion(ana, addDias(lun, n), '10:00'));
-  const luis = cliente({ entrenador_id: 'p-edu', nombre: 'Luis', apellidos: 'Ejemplo Gil', estado: 'efectivo', origen: 'externo', telefono: '600 000 002' });
+  const luis = cliente({ entrenador_id: 'p-edu', nombre: 'Luis', apellidos: 'Ejemplo Gil', estado: 'efectivo', origen: 'externo', telefono: '600 000 002', lesiones: 'Ninguna' });
   bono(luis, 12, 480, addDias(hoy, 12), addDias(hoy, 12), 'transferencia');
   sesion(luis, addDias(lun, 0), '18:00');
   sesion(luis, addDias(lun, 3), '17:30');

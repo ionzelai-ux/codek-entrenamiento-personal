@@ -95,8 +95,13 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
 - **Campos obligatorios** (sin ellos no se guarda, y se avisa de todos los que faltan a la vez): nombre, teléfono, tipo
   (potencial/cliente) y origen; en un potencial, sesiones e importe; en un cliente nuevo, todo el bono (sesiones, importe,
   fecha de pago, fecha de inicio y método de pago).
-- **Info pendiente**: apellidos, email, fecha de nacimiento, veces por semana (potenciales) y bono o método de pago
-  (clientes) no bloquean, pero la ficha se marca «Info pendiente» en la lista y en la ficha. Hay un filtro para verlas.
+- **Info pendiente**: apellidos, email, fecha de nacimiento, lesiones, veces por semana (potenciales) y bono o método
+  de pago (clientes) no bloquean, pero la ficha se marca «Info pendiente» en la lista y en la ficha. Hay un filtro para verlas.
+- **Lesiones o limitaciones físicas** (`sql/10_lesiones.sql`): texto libre en la ficha (potencial o cliente), tanto
+  para el administrador como para el entrenador. Si hay algo escrito se muestra en naranja al principio de la ficha,
+  y con un chip «🩹 LESIÓN» en la lista (salvo que ponga básicamente «Ninguna», que no se destaca con el chip pero
+  sí queda escrito en la ficha). Cuenta como «info pendiente» hasta que se escribe algo, aunque sea «Ninguna»: la
+  idea es que se revise siempre, no que se quede sin mirar.
 - **Origen**: *Codek* = captado por la empresa · *Externo* = lo trae el entrenador.
 - **Estado de pago de un bono**: *pagado* solo si el administrador lo confirmó con «✓ Marcar pagado» (se guarda la
   fecha); si no, *pendiente de pago* cuando su fecha de pago es hoy o ya pasó, y *pago programado* cuando es futura.

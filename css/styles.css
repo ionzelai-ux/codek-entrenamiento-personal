@@ -7,6 +7,7 @@
   --green: #2d6e2d; --green-light: #4caf50;
   --yellow: #c8a030; --yellow-bg: rgba(200,160,48,0.15);
   --blue-light: #4a9fd4;
+  --orange: #d4703a;
   --mono: 'Share Tech Mono', monospace; --display: 'Bebas Neue', sans-serif;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -55,6 +56,7 @@ header { background: var(--dark); border-bottom: 3px solid var(--red); padding: 
 .chip.gris { color: #aaa; }
 .chip.pendiente { border-color: var(--yellow); color: #111; background: var(--yellow); font-weight: 700; }
 .chip.rojo { border-color: var(--red-light); color: #fff; background: var(--red); font-weight: 700; }
+.chip.lesion { border-color: var(--orange); color: #fff; background: var(--orange); font-weight: 700; }
 
 /* Cobros en la lista de clientes */
 .pago-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
@@ -93,6 +95,7 @@ header { background: var(--dark); border-bottom: 3px solid var(--red); padding: 
 .form-input:focus { border-color: var(--red); }
 .form-input:disabled { opacity: .6; }
 select.form-input { appearance: auto; }
+textarea.form-input { resize: vertical; min-height: 46px; line-height: 1.4; }
 input[type=date], input[type=time] { color-scheme: dark; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .form-row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
@@ -188,6 +191,9 @@ a.meta-chip:hover { border-color: var(--red); color: var(--text); }
 .ah-crudo { background: var(--panel); border: 1px solid var(--border); padding: 12px; font-family: var(--mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; max-height: 420px; overflow: auto; color: #ccc; user-select: all; }
 .fila-rack td { background: rgba(200,160,48,.08); }
 .alert-info { background: rgba(74,159,212,.08); border-color: var(--blue-light); color: var(--blue-light); }
+.alert-lesion { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  background: rgba(212,112,58,.14); border-color: var(--orange); color: var(--orange); font-size: 12px; }
+.alert-lesion b { letter-spacing: 2px; }
 
 .bono-history { font-size: 13px; }
 .bono-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }

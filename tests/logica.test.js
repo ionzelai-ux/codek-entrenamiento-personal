@@ -6,7 +6,7 @@ import {
   solapan, buscarConflictos, generarFechas, repartirCarriles, agrupar, sumar, camposPendientes,
   estadoCobro, facturacionMes,
   comisionBono, esDeclaradoPorDefecto, bonosLiquidablesMes, liquidacionMes, totalesComisiones, agruparComisionesPorEntrenador,
-  entrenadoresConComision, DEFAULT_CONFIG_COMISIONES,
+  entrenadoresConComision, DEFAULT_CONFIG_COMISIONES, tieneLesionActiva,
 } from '../js/logica.js';
 
 test('fechas: lunes, día de la semana y meses', () => {
@@ -181,7 +181,7 @@ test('carriles: bloques solapados se reparten, los separados no', () => {
 });
 
 test('info pendiente: ficha completa no falta nada; cada hueco se nombra', () => {
-  const completo = { apellidos: 'Remón', telefono: '600', email: 'a@b.c', fecha_nacimiento: '1990-01-01', estado: 'efectivo', bonos: [{ metodo_pago: 'efectivo' }] };
+  const completo = { apellidos: 'Remón', telefono: '600', email: 'a@b.c', fecha_nacimiento: '1990-01-01', lesiones: 'Ninguna', estado: 'efectivo', bonos: [{ metodo_pago: 'efectivo' }] };
   assert.deepEqual(camposPendientes(completo), []);
   assert.deepEqual(camposPendientes({ ...completo, apellidos: '  ', email: null }), ['apellidos', 'email']);
   // cliente sin bono / con un bono sin método de pago
@@ -191,10 +191,28 @@ test('info pendiente: ficha completa no falta nada; cada hueco se nombra', () =>
 });
 
 test('info pendiente: un potencial necesita sesiones, veces por semana e importe', () => {
-  const pot = { apellidos: 'X', telefono: '6', email: 'e', fecha_nacimiento: '1990-01-01', estado: 'potencial' };
+  const pot = { apellidos: 'X', telefono: '6', email: 'e', fecha_nacimiento: '1990-01-01', lesiones: 'Ninguna', estado: 'potencial' };
   assert.deepEqual(camposPendientes(pot), ['sesiones que quiere', 'veces por semana', 'importe estimado']);
   assert.deepEqual(camposPendientes({ ...pot, pot_sesiones_bono: 8, pot_veces_semana: 2, pot_precio: 336 }), []);
   assert.deepEqual(camposPendientes({ ...pot, pot_sesiones_bono: 8, pot_veces_semana: 2, pot_precio: 0 }), ['importe estimado']);
+});
+
+test('info pendiente: lesiones cuenta como pendiente hasta que se escribe algo (aunque sea "Ninguna")', () => {
+  const base = { apellidos: 'X', telefono: '6', email: 'e', fecha_nacimiento: '1990-01-01', estado: 'potencial', pot_sesiones_bono: 8, pot_veces_semana: 2, pot_precio: 336 };
+  assert.deepEqual(camposPendientes(base), ['lesiones o molestias'], 'sin lesiones ni siquiera puesto');
+  assert.deepEqual(camposPendientes({ ...base, lesiones: '' }), ['lesiones o molestias']);
+  assert.deepEqual(camposPendientes({ ...base, lesiones: '  ' }), ['lesiones o molestias']);
+  assert.deepEqual(camposPendientes({ ...base, lesiones: 'Ninguna' }), []);
+  assert.deepEqual(camposPendientes({ ...base, lesiones: 'Molestia de rodilla derecha' }), []);
+});
+
+test('lesión activa: "ninguna" y similares no cuentan como alarma; lo demás sí', () => {
+  for (const t of [null, undefined, '', '  ', 'Ninguna', 'ninguna.', 'Ningunas', 'No', 'NO', 'Nada', 'Sin lesiones', 'sin lesión']) {
+    assert.equal(tieneLesionActiva(t), false, `no debería alarmar: ${JSON.stringify(t)}`);
+  }
+  for (const t of ['Molestia de rodilla derecha', 'No puede levantar peso por encima de la cabeza', 'Hernia discal L4-L5']) {
+    assert.equal(tieneLesionActiva(t), true, `debería alarmar: ${JSON.stringify(t)}`);
+  }
 });
 
 test('resumen: cobrado (confirmado), pendiente, programado y estimado por entrenador', () => {

@@ -138,7 +138,8 @@ export function repartirCarriles(items) {
 // ── Ficha completa o con información pendiente ────────────────────────────
 // Devuelve las etiquetas de lo que aún falta. Los campos OBLIGATORIOS (nombre, teléfono,
 // tipo, origen, y el dinero) los exige el formulario; aquí se cuenta también lo deseable.
-// Los días fijos y las notas son opcionales y no cuentan.
+// Los días fijos y las notas son opcionales y no cuentan. Las lesiones sí cuentan (aunque sea
+// para escribir "Ninguna"): antes de entrenar a alguien conviene saberlo con seguridad.
 export function camposPendientes(c) {
   const lleno = x => x !== null && x !== undefined && String(x).trim() !== '';
   const falta = [];
@@ -146,6 +147,7 @@ export function camposPendientes(c) {
   if (!lleno(c.telefono)) falta.push('teléfono');
   if (!lleno(c.email)) falta.push('email');
   if (!lleno(c.fecha_nacimiento)) falta.push('fecha de nacimiento');
+  if (!lleno(c.lesiones)) falta.push('lesiones o molestias');
   if (c.estado === 'potencial') {
     if (!(c.pot_sesiones_bono > 0)) falta.push('sesiones que quiere');
     if (!(c.pot_veces_semana > 0)) falta.push('veces por semana');
@@ -157,6 +159,14 @@ export function camposPendientes(c) {
   }
   return falta;
 }
+
+// Para el aviso rápido en la lista de clientes: si lo que hay escrito dice básicamente "no tiene",
+// no hace falta destacarlo con un chip de alarma (sí se sigue mostrando tal cual dentro de la ficha).
+const SIN_LESION = /^(ningun[ao]s?|no|nada|sin lesiones?|sin lesión)\.?$/i;
+export const tieneLesionActiva = lesiones => {
+  const t = String(lesiones ?? '').trim();
+  return t !== '' && !SIN_LESION.test(t);
+};
 
 // ── Resumen de facturación ────────────────────────────────────────────────
 // mes = 'YYYY-MM' (el mes se toma de la fecha de pago del bono). cobrado = confirmado como pagado por el

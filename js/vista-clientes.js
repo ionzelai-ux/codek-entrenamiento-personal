@@ -1,7 +1,7 @@
 // Clientes: lista con filtros + ficha (datos, bonos, días fijos, créditos y sesiones).
 import { S, bus, esAdmin, entrenadorDe, nombreCompleto, clienteDe, entrenadorFiltroId } from './store.js';
 import { esc, dialogo, toast, fmtEUR, fmtFecha, fmtFechaDia, textoDias, etiquetaMetodo } from './util.js';
-import { hoyISO, creditos, estadoEfectivo, estadoPago, estadoCobro, edad, camposPendientes } from './logica.js';
+import { hoyISO, creditos, estadoEfectivo, estadoPago, estadoCobro, edad, camposPendientes, tieneLesionActiva } from './logica.js';
 import { modalCliente, modalConvertir, modalBono, modalEditarBono, modalGenerar, modalSesion, cambiarEstadoSesion } from './modales.js';
 
 const ETIQUETA = { reservada: 'RESERV.', hecha: 'HECHA', no_vino: 'NO VINO', auto: 'AUTO' };
@@ -77,7 +77,7 @@ function itemHTML(c) {
   return `<div class="client-item ${S.cliSel === c.id ? 'active' : ''} ${c.activo ? '' : 'archivado'}" data-acc="cli-sel" data-id="${c.id}">
     ${esAdmin() ? `<button class="item-borrar" data-acc="cli-borrar" data-id="${c.id}" title="Eliminar ficha" aria-label="Eliminar ficha">🗑</button>` : ''}
     <div class="client-name">${esc(nombreCompleto(c))}</div>
-    <div class="chips">${chipsTipo(c)}${esAdmin() && !entrenadorFiltroId() ? `<span class="chip" style="border-color:${entrenadorDe(c.entrenador_id)?.color};color:${entrenadorDe(c.entrenador_id)?.color}">${esc(entrenadorDe(c.entrenador_id)?.nombre || '')}</span>` : ''}${c.activo ? '' : '<span class="chip gris">ARCHIVADO</span>'}${c.activo && camposPendientes(c).length ? '<span class="chip pendiente" title="Faltan datos por completar">INFO PENDIENTE</span>' : ''}</div>
+    <div class="chips">${chipsTipo(c)}${tieneLesionActiva(c.lesiones) ? '<span class="chip lesion" title="Tiene lesiones o limitaciones registradas">🩹 LESIÓN</span>' : ''}${esAdmin() && !entrenadorFiltroId() ? `<span class="chip" style="border-color:${entrenadorDe(c.entrenador_id)?.color};color:${entrenadorDe(c.entrenador_id)?.color}">${esc(entrenadorDe(c.entrenador_id)?.nombre || '')}</span>` : ''}${c.activo ? '' : '<span class="chip gris">ARCHIVADO</span>'}${c.activo && camposPendientes(c).length ? '<span class="chip pendiente" title="Faltan datos por completar">INFO PENDIENTE</span>' : ''}</div>
     ${pagoHTML(c)}
     ${extra}</div>`;
 }
@@ -99,6 +99,10 @@ function fichaHTML(c) {
   const ed = edad(c.fecha_nacimiento);
 
   let alertas = '';
+  if (String(c.lesiones || '').trim()) {
+    alertas += `<div class="alert alert-lesion"><span>🩹 <b>LESIONES / LIMITACIONES</b> — ${esc(c.lesiones)}</span>
+      <button class="btn btn-sm btn-secondary" data-acc="cli-editar" data-id="${c.id}">Editar</button></div>`;
+  }
   const pendiente = camposPendientes(c);
   if (pendiente.length) {
     alertas += `<div class="alert alert-pendiente"><span>📝 <b>INFO PENDIENTE</b> — falta: ${esc(pendiente.join(', '))}.</span>
