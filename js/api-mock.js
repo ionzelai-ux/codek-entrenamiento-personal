@@ -218,4 +218,13 @@ export async function actualizarSesion(id, cambios) {
   Object.assign(s, cambios);
   return clonar(s);
 }
+// Varias sesiones de golpe: lista = [{ id, cambios }]
+export async function actualizarSesiones(lista) {
+  const ids = idsVisibles();
+  for (const { id, cambios } of lista) {
+    const s = sesiones.find(x => x.id === id);
+    if (!s || !ids.has(s.cliente_id)) throw new Error('Sesión no accesible');
+    Object.assign(s, cambios);
+  }
+}
 export async function eliminarSesion(id) { sesiones.splice(sesiones.findIndex(s => s.id === id), 1); }

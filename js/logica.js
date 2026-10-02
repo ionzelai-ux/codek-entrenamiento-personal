@@ -96,6 +96,51 @@ export function buscarConflictos(nueva, existentes, ignorarId = null) {
   return existentes.filter(e => e.id !== ignorarId && e.estado !== 'no_vino' && solapan(nueva, e));
 }
 
+// ── Cambio de horario en bloque ───────────────────────────────────────────
+// Sesiones de un cliente que todavía se pueden mover: las reservadas cuya hora no ha pasado.
+export function sesionesCambiables(cliente, ahora = new Date()) {
+  return (cliente.sesiones || []).filter(s => estadoEfectivo(s, ahora) === 'reservada')
+    .sort((a, b) => a.fecha.localeCompare(b.fecha) || a.hora.localeCompare(b.hora));
+}
+
+// cambio = { modo: 'desplazar', minutos } (negativo = antes) o { modo: 'fijar', hora: 'HH:MM' }.
+// Devuelve la hora nueva 'HH:MM', o null si no es válida o se sale del día (antes de 00:00 / pasada la medianoche).
+export function horaNueva(hora, cambio) {
+  let m;
+  if (cambio?.modo === 'fijar') {
+    if (!/^\d{1,2}:\d{2}$/.test(cambio.hora || '')) return null;
+    m = horaAMin(cambio.hora);
+  } else {
+    const d = Number(cambio?.minutos);
+    if (!Number.isFinite(d)) return null;
+    m = horaAMin(hora) + d;
+  }
+  return m >= 0 && m < 24 * 60 ? minAHora(m) : null;
+}
+
+// Vista previa del cambio: para cada sesión candidata, su hora nueva y con qué otras sesiones del
+// entrenador chocaría. `marcadas` = ids que se van a cambiar de verdad: sus huecos actuales quedan libres,
+// así que no cuentan como choque; las que se dejan sin tocar sí.
+export function planCambioHorario(candidatas, marcadas, cambio, existentes = []) {
+  const quedan = existentes.filter(e => !marcadas.has(e.id));
+  return candidatas.map(s => {
+    const despues = horaNueva(s.hora, cambio);
+    const conflictos = despues && marcadas.has(s.id)
+      ? buscarConflictos({ fecha: s.fecha, hora: despues, duracion_min: s.duracion_min }, quedan) : [];
+    return { sesion: s, hora_antes: s.hora, hora_despues: despues, conflictos };
+  });
+}
+
+// Días fijos con la hora nueva: solo cambian los que coinciden con una sesión movida (mismo día de la
+// semana y misma hora de antes). cambios = [{ fecha, hora_antes, hora_despues }].
+export function diasFijosActualizados(dias, cambios) {
+  const mapa = new Map();
+  for (const c of cambios) {
+    if (c.hora_despues && c.hora_despues !== c.hora_antes) mapa.set(`${diaSemana(c.fecha)}|${c.hora_antes}`, c.hora_despues);
+  }
+  return (dias || []).map(d => (mapa.has(`${d.dia}|${d.hora}`) ? { ...d, hora: mapa.get(`${d.dia}|${d.hora}`) } : d));
+}
+
 // ── Generación de sesiones a partir de días fijos ─────────────────────────
 // dias: [{dia: 1..7, hora: 'HH:MM'}]. Devuelve `cantidad` fechas a partir de `desde` (incluida).
 export function generarFechas({ desde, dias, cantidad }) {

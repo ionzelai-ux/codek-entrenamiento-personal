@@ -4,7 +4,8 @@ import { S, bus, esAdmin, entrenadorDe, nombreCompleto, clienteDe, entrenadorFil
 import { esc, abrirModal, dialogo, errorEnModal, toast, fmtFechaDia, fmtEUR, DIAS_SEM, textoDias, METODOS_PAGO } from './util.js';
 import {
   hoyISO, precioBonoSugerido, precioHoraSugerido, buscarConflictos, generarFechas,
-  creditos, estadoEfectivo, ocupaCredito,
+  creditos, estadoEfectivo, ocupaCredito, diaSemana,
+  sesionesCambiables, horaNueva, planCambioHorario, diasFijosActualizados,
 } from './logica.js';
 import { OPCIONES_BONO, DURACION_SESION_MIN } from './config.js';
 
@@ -580,5 +581,136 @@ export function modalGenerar(c, { bono = null, cantidad = null } = {}) {
     m.cerrar();
     await bus.recargar();
     toast(elegidas.length === 1 ? '1 sesión creada' : `${elegidas.length} sesiones creadas`);
+  });
+}
+
+// ── Cambiar el horario de varias sesiones a la vez ────────────────────────
+// Adelantar/retrasar unos minutos o poner una hora exacta a las sesiones reservadas de un cliente,
+// con vista previa, aviso de choques y (opcional) cambio de sus días fijos.
+export async function modalCambiarHorario(c) {
+  if (!c) return;
+  const candidatas = sesionesCambiables(c);
+  if (!candidatas.length) { toast('Este cliente no tiene sesiones reservadas pendientes que cambiar.', true); return; }
+  const entr = entrenadorDe(c.entrenador_id)?.nombre || 'El entrenador';
+  const existentes = await S.api.sesionesEntre(candidatas[0].fecha, candidatas[candidatas.length - 1].fecha, c.entrenador_id);
+  const diasPresentes = [...new Set(candidatas.map(s => diaSemana(s.fecha)))].sort((a, b) => a - b);
+  const nombreDia = d => DIAS_SEM.find(x => x[0] === d)?.[2].toLowerCase() || '';
+  const plural = (n, uno, varios) => (n === 1 ? uno : varios);
+
+  const m = abrirModal(`
+    <div class="modal-title">Cambiar horario en bloque</div>
+    <p class="sub">${esc(nombreCompleto(c))} · ${esc(entr)} · ${candidatas.length} ${plural(candidatas.length, 'sesión reservada', 'sesiones reservadas')}</p>
+    <form novalidate>
+      <div class="form-group"><label class="form-label">Qué quieres hacer</label>
+        ${segHTML('modo', [['desplazar', 'Adelantar / retrasar'], ['fijar', 'Poner una hora exacta']], 'desplazar')}</div>
+      <div data-modo="desplazar" class="form-row">
+        <div class="form-group"><label class="form-label">Hacia</label>${segHTML('dir', [['antes', '⏪ Antes'], ['despues', 'Después ⏩']], 'antes')}</div>
+        <div class="form-group"><label class="form-label">Minutos</label><input class="form-input" name="minutos" type="number" min="5" max="600" step="5" value="30"></div>
+      </div>
+      <div data-modo="fijar" class="form-group" hidden><label class="form-label">Nueva hora para todas</label><input class="form-input" name="hora" type="time"></div>
+      <div class="section-mini">Sesiones</div>
+      <div class="sel-rapida" data-selrapida>Marcar:
+        <button type="button" class="btn btn-sm btn-secondary" data-sel="todas">Todas</button>
+        <button type="button" class="btn btn-sm btn-secondary" data-sel="ninguna">Ninguna</button>
+        ${diasPresentes.length > 1 ? diasPresentes.map(d => `<button type="button" class="btn btn-sm btn-secondary" data-sel="${d}">Solo ${nombreDia(d)}</button>`).join('') : ''}
+      </div>
+      <div class="gen-lista" data-preview></div>
+      <div data-fijos></div>
+      ${acciones('Cambiar')}
+    </form>`, 'modal-lg');
+  const form = m.el.querySelector('form');
+  const preview = m.el.querySelector('[data-preview]');
+  const fijosEl = m.el.querySelector('[data-fijos]');
+  const btn = form.querySelector('button[type=submit]');
+  bindCerrar(m);
+
+  const marcado = new Map(candidatas.map(s => [s.id, true]));   // lo que ha marcado la persona
+  let fijosMarcado = true;
+  const leerCambio = () => {
+    if (segVal(m.el, 'modo') === 'fijar') return { modo: 'fijar', hora: form.elements.hora.value };
+    const mins = Number(form.elements.minutos.value);
+    return { modo: 'desplazar', minutos: segVal(m.el, 'dir') === 'antes' ? -mins : mins };
+  };
+  // Estado actual: la vista previa completa y qué sesiones se cambiarían de verdad.
+  function calcular() {
+    const cambio = leerCambio();
+    const aplicable = s => { const h = horaNueva(s.hora, cambio); return marcado.get(s.id) && !!h && h !== s.hora; };
+    const ids = new Set(candidatas.filter(aplicable).map(s => s.id));
+    const plan = planCambioHorario(candidatas, ids, cambio, existentes);
+    const elegidas = plan.filter(p => ids.has(p.sesion.id));
+    const nuevos = diasFijosActualizados(c.dias_fijos, elegidas.map(p => ({ fecha: p.sesion.fecha, hora_antes: p.hora_antes, hora_despues: p.hora_despues })));
+    const hayFijos = JSON.stringify(nuevos) !== JSON.stringify(c.dias_fijos || []);
+    return { plan, elegidas, nuevos, hayFijos };
+  }
+  function pintar() {
+    const { plan, elegidas, nuevos, hayFijos } = calcular();
+    preview.innerHTML = plan.map((p, i) => {
+      const s = p.sesion, valido = !!p.hora_despues && p.hora_despues !== p.hora_antes, x = p.conflictos[0];
+      return `<label class="gen-fila ${x ? 'conflicto' : ''} ${valido ? '' : 'sin-cambio'}">
+        <input type="checkbox" data-i="${i}" ${valido && marcado.get(s.id) ? 'checked' : ''} ${valido ? '' : 'disabled'}>
+        <span class="gf-f">${fmtFechaDia(s.fecha)}</span>
+        <span class="gf-h">${p.hora_antes}</span><span class="gf-flecha">→</span><span class="gf-h gf-nueva">${p.hora_despues ?? '—'}</span>
+        ${!p.hora_despues ? '<span class="gf-a">⚠ se saldría del día</span>' : !valido ? '<span class="gf-a gf-neutro">ya está a esa hora</span>' : ''}
+        ${x ? `<span class="gf-a">⚠ choca con ${esc(nombreCompleto(x.clientes))} (${esc(x.hora)})</span>` : ''}
+      </label>`;
+    }).join('');
+    fijosEl.innerHTML = hayFijos
+      ? `<label class="check" style="margin-top:12px"><input type="checkbox" name="cambiar_fijos" ${fijosMarcado ? 'checked' : ''}>
+          Cambiar también sus días fijos: <b>${esc(textoDias(c.dias_fijos))}</b> → <b>${esc(textoDias(nuevos))}</b></label>
+        <div class="hint">Así las próximas sesiones que generes saldrán ya a la hora nueva.</div>` : '';
+    btn.disabled = elegidas.length === 0;
+    btn.textContent = `Cambiar ${elegidas.length} ${plural(elegidas.length, 'sesión', 'sesiones')}`;
+  }
+
+  bindSeg(m.el, nombre => {
+    if (nombre === 'modo') {
+      const fijar = segVal(m.el, 'modo') === 'fijar';
+      m.el.querySelector('[data-modo=desplazar]').hidden = fijar;
+      m.el.querySelector('[data-modo=fijar]').hidden = !fijar;
+    }
+    pintar();
+  });
+  form.elements.minutos.addEventListener('input', pintar);
+  form.elements.hora.addEventListener('input', pintar);
+  preview.addEventListener('change', e => {
+    const i = e.target.dataset.i;
+    if (i === undefined) return;
+    marcado.set(candidatas[Number(i)].id, e.target.checked);
+    pintar();
+  });
+  fijosEl.addEventListener('change', e => { fijosMarcado = e.target.checked; });
+  m.el.querySelector('[data-selrapida]').addEventListener('click', e => {
+    const b = e.target.closest('[data-sel]');
+    if (!b) return;
+    const v = b.dataset.sel;
+    for (const s of candidatas) marcado.set(s.id, v === 'todas' ? true : v === 'ninguna' ? false : diaSemana(s.fecha) === Number(v));
+    pintar();
+  });
+  pintar();
+
+  alEnviar(m, form, async () => {
+    const cambio = leerCambio();
+    if (cambio.modo === 'fijar' && !cambio.hora) throw new Error('Indica la nueva hora');
+    if (cambio.modo === 'desplazar' && !(Number(form.elements.minutos.value) > 0)) throw new Error('Indica cuántos minutos');
+    const { elegidas, nuevos, hayFijos } = calcular();
+    if (!elegidas.length) throw new Error('No hay sesiones marcadas que cambiar');
+    const choques = elegidas.filter(p => p.conflictos.length);
+    if (choques.length) {
+      const lista = choques.map(p => `<li><b>${esc(fmtFechaDia(p.sesion.fecha))} ${esc(p.hora_despues)}</b> · con ${esc(nombreCompleto(p.conflictos[0].clientes))} (${esc(p.conflictos[0].hora)})</li>`).join('');
+      const ok = await dialogo({
+        titulo: '⚠ Solape de horario',
+        mensaje: `<p>${esc(entr)} ya tiene otra sesión en ${plural(choques.length, 'esta', 'estas')}:</p><ul class="dlg-lista">${lista}</ul><p>¿Cambiar igualmente?</p>`,
+        ok: 'Cambiar igualmente',
+      });
+      if (!ok) return;
+    }
+    await S.api.actualizarSesiones(elegidas.map(p => ({
+      id: p.sesion.id, cambios: { hora: p.hora_despues, ...(p.sesion.nota === 'Hora no registrada' ? { nota: null } : {}) },
+    })));
+    const cambiarFijos = hayFijos && !!fijosEl.querySelector('[name=cambiar_fijos]')?.checked;
+    if (cambiarFijos) await S.api.guardarCliente({ id: c.id, dias_fijos: nuevos });
+    m.cerrar();
+    await bus.recargar();
+    toast(`${elegidas.length} ${plural(elegidas.length, 'sesión cambiada', 'sesiones cambiadas')}${cambiarFijos ? ' y sus días fijos' : ''}`);
   });
 }

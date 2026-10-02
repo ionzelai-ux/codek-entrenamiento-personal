@@ -2,7 +2,7 @@
 import { S, bus, esAdmin, entrenadorDe, nombreCompleto, clienteDe, entrenadorFiltroId } from './store.js';
 import { esc, dialogo, toast, fmtEUR, fmtFecha, fmtFechaDia, textoDias, etiquetaMetodo } from './util.js';
 import { hoyISO, creditos, estadoEfectivo, estadoPago, estadoCobro, edad, camposPendientes, tieneLesionActiva } from './logica.js';
-import { modalCliente, modalConvertir, modalBono, modalEditarBono, modalGenerar, modalSesion, cambiarEstadoSesion } from './modales.js';
+import { modalCliente, modalConvertir, modalBono, modalEditarBono, modalGenerar, modalCambiarHorario, modalSesion, cambiarEstadoSesion } from './modales.js';
 
 const ETIQUETA = { reservada: 'RESERV.', hecha: 'HECHA', no_vino: 'NO VINO', auto: 'AUTO' };
 
@@ -128,7 +128,8 @@ function fichaHTML(c) {
     <button class="btn btn-secondary btn-sm btn-w" data-acc="cli-editar" data-id="${c.id}">✎ Editar ficha</button>
     ${efe ? `<button class="btn btn-primary btn-sm btn-w" data-acc="cli-sesion" data-id="${c.id}">+ Sesión</button>
       <button class="recharge-btn" data-acc="cli-bono" data-id="${c.id}">+ Nuevo bono</button>
-      <button class="btn btn-secondary btn-sm btn-w" data-acc="cli-generar" data-id="${c.id}">⚙ Generar sesiones</button>`
+      <button class="btn btn-secondary btn-sm btn-w" data-acc="cli-generar" data-id="${c.id}">⚙ Generar sesiones</button>
+      <button class="btn btn-secondary btn-sm btn-w" data-acc="cli-horario" data-id="${c.id}">🕘 Cambiar horario en bloque</button>`
       : `<button class="btn btn-primary btn-sm btn-w" data-acc="cli-convertir" data-id="${c.id}">✔ Convertir en cliente</button>`}
     <button class="btn btn-secondary btn-sm btn-w" data-acc="cli-archivar" data-id="${c.id}">${c.activo ? '🗄 Archivar' : '↩ Reactivar'}</button>
     ${esAdmin() ? `<button class="btn btn-danger btn-sm btn-w" data-acc="cli-borrar" data-id="${c.id}">🗑 Eliminar ficha</button>` : ''}`;
@@ -295,6 +296,7 @@ export const accionesClientes = {
   'cli-convertir': t => modalConvertir(clienteDe(t.dataset.id)),
   'cli-bono': t => modalBono(clienteDe(t.dataset.id)),
   'cli-generar': t => modalGenerar(clienteDe(t.dataset.id)),
+  'cli-horario': t => modalCambiarHorario(clienteDe(t.dataset.id)),
   'cli-sesion': t => modalSesion({ clienteId: t.dataset.id, fecha: hoyISO() }),
   'cli-archivar': async t => {
     const c = clienteDe(t.dataset.id);

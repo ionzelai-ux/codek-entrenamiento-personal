@@ -92,6 +92,12 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   Avisa si hay solape, se cancela con Esc o soltando fuera del calendario, y al fijar la hora se quita la nota
   «Hora no registrada». Solo con ratón; en pantalla táctil se cambia desde el formulario de la sesión.
 - **Solapes**: al crear una sesión o generar las de los días fijos se avisa si ese entrenador ya tiene a alguien a esa hora.
+- **Cambiar horario en bloque** (ficha del cliente → «🕘 Cambiar horario en bloque»): adelanta/retrasa N minutos o pone
+  una hora exacta a todas las sesiones *reservadas* aún por venir de ese cliente (las hechas, no vino y pasadas no se
+  tocan). Vista previa «10:00 → 09:30» con casilla por sesión, atajos «Todas / Ninguna / Solo lunes…», aviso de choques
+  con otras sesiones del entrenador (se puede cambiar igualmente) y casilla para cambiar también sus días fijos
+  (solo los que coinciden con las sesiones movidas), para que las próximas que se generen salgan ya a la hora nueva.
+  No necesita SQL.
 - **Campos obligatorios** (sin ellos no se guarda, y se avisa de todos los que faltan a la vez): nombre, teléfono, tipo
   (potencial/cliente) y origen; en un potencial, sesiones e importe; en un cliente nuevo, todo el bono (sesiones, importe,
   fecha de pago, fecha de inicio y método de pago).

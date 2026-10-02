@@ -86,6 +86,17 @@ export async function crearSesiones(filas) { return comprobar(await sb.from('ses
 export async function actualizarSesion(id, cambios) {
   return comprobar(await sb.from('sesiones').update(cambios).eq('id', id).select().single());
 }
+// Varias sesiones de golpe: lista = [{ id, cambios }]. Cada una es su propio UPDATE (cada sesión lleva
+// un valor distinto); si alguna falla se avisa cuántas sí se cambiaron, para no dejar al usuario a ciegas.
+export async function actualizarSesiones(lista) {
+  const una = async ({ id, cambios }) => {
+    const filas = comprobar(await sb.from('sesiones').update(cambios).eq('id', id).select('id'));
+    if (!filas.length) throw new Error('sin permiso o no existe');   // la RLS no da error: simplemente no actualiza nada
+  };
+  const res = await Promise.allSettled(lista.map(una));
+  const fallos = res.filter(r => r.status === 'rejected').length;
+  if (fallos) throw new Error(`Solo se cambiaron ${lista.length - fallos} de ${lista.length} sesiones (${fallos} fallaron). Revisa la ficha del cliente.`);
+}
 export async function eliminarSesion(id) { comprobar(await sb.from('sesiones').delete().eq('id', id)); }
 
 // ── Comisiones (solo administrador; la base de datos también lo impone) ────

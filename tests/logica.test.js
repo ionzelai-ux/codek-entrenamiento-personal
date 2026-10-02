@@ -7,6 +7,7 @@ import {
   estadoCobro, facturacionMes,
   comisionBono, esDeclaradoPorDefecto, bonosLiquidablesMes, liquidacionMes, totalesComisiones, agruparComisionesPorEntrenador,
   entrenadoresConComision, DEFAULT_CONFIG_COMISIONES, tieneLesionActiva,
+  sesionesCambiables, horaNueva, planCambioHorario, diasFijosActualizados,
 } from '../js/logica.js';
 
 test('fechas: lunes, día de la semana y meses', () => {
@@ -338,4 +339,67 @@ test('agrupar por entrenador: cada fila va con su entrenador', () => {
 test('entrenadores con comisión: por defecto todos, salvo el que se haya desactivado', () => {
   const entrenadores = [{ id: 'edu', aplica_comisiones: true }, { id: 'jes', aplica_comisiones: false }, { id: 'nueva' }];
   assert.deepEqual(entrenadoresConComision(entrenadores).map(e => e.id), ['edu', 'nueva']);
+});
+
+// ── Cambio de horario en bloque ─────────────────────────────────────────────
+test('hora nueva: desplazar (antes/después), fijar, y fuera del día', () => {
+  assert.equal(horaNueva('10:00', { modo: 'desplazar', minutos: -30 }), '09:30');
+  assert.equal(horaNueva('10:00', { modo: 'desplazar', minutos: 30 }), '10:30');
+  assert.equal(horaNueva('10:30', { modo: 'desplazar', minutos: -45 }), '09:45');
+  assert.equal(horaNueva('00:15', { modo: 'desplazar', minutos: -30 }), null, 'antes de las 00:00');
+  assert.equal(horaNueva('23:45', { modo: 'desplazar', minutos: 30 }), null, 'pasada la medianoche');
+  assert.equal(horaNueva('10:00', { modo: 'fijar', hora: '9:30' }), '09:30');
+  assert.equal(horaNueva('10:00', { modo: 'fijar', hora: '' }), null);
+  assert.equal(horaNueva('10:00', { modo: 'desplazar', minutos: 'abc' }), null);
+});
+
+test('sesiones cambiables: solo reservadas que aún no han pasado, ordenadas', () => {
+  const ahora = new Date(2026, 9, 2, 12, 0);
+  const c = { sesiones: [
+    { id: 'c', fecha: '2026-10-08', hora: '10:00', estado: 'reservada' },
+    { id: 'a', fecha: '2026-10-05', hora: '10:00', estado: 'reservada' },
+    { id: 'pasada', fecha: '2026-09-30', hora: '10:00', estado: 'reservada' },   // ya pasó sin confirmar → auto
+    { id: 'hecha', fecha: '2026-10-06', hora: '10:00', estado: 'hecha' },
+    { id: 'novino', fecha: '2026-10-07', hora: '10:00', estado: 'no_vino' },
+  ] };
+  assert.deepEqual(sesionesCambiables(c, ahora).map(s => s.id), ['a', 'c']);
+  assert.deepEqual(sesionesCambiables({}, ahora), []);
+});
+
+test('plan de cambio: detecta choques con otras sesiones del entrenador, pero no con las que se mueven', () => {
+  const s1 = { id: 's1', fecha: '2026-10-05', hora: '10:00', duracion_min: 60 };
+  const s2 = { id: 's2', fecha: '2026-10-07', hora: '10:00', duracion_min: 60 };
+  const ajena = { id: 'x', fecha: '2026-10-05', hora: '09:00', duracion_min: 60, estado: 'reservada' };   // 09:00–10:00
+  const ajenaLibre = { id: 'y', fecha: '2026-10-07', hora: '08:00', duracion_min: 60, estado: 'reservada' };   // 08:00–09:00
+  const plan = planCambioHorario([s1, s2], new Set(['s1', 's2']), { modo: 'desplazar', minutos: -30 }, [s1, s2, ajena, ajenaLibre]);
+  assert.deepEqual(plan.map(p => p.hora_despues), ['09:30', '09:30']);
+  assert.deepEqual(plan[0].conflictos.map(x => x.id), ['x'], '09:30–10:30 pisa a la de las 09:00');
+  assert.deepEqual(plan[1].conflictos.map(x => x.id), [], '09:30–10:30 no pisa a la de las 08:00 (acaba a las 09:00)');
+  // una sesión desmarcada no se evalúa (no se va a mover), y su hueco sigue ocupado para las demás
+  const sin = planCambioHorario([s1, s2], new Set(['s2']), { modo: 'desplazar', minutos: -30 }, [s1, s2, ajena]);
+  assert.deepEqual(sin[0].conflictos, [], 'desmarcada: no se evalúa');
+  const entreSi = planCambioHorario([s1, { ...s2, fecha: '2026-10-05', hora: '09:00', id: 's3' }], new Set(['s1']), { modo: 'desplazar', minutos: -30 }, []);
+  assert.deepEqual(entreSi[0].conflictos, [], 'sin existentes no hay choques');
+});
+
+test('plan de cambio: una sesión que se sale del día queda sin hora nueva y sin choques', () => {
+  const s = { id: 's', fecha: '2026-10-05', hora: '00:15', duracion_min: 60 };
+  const [p] = planCambioHorario([s], new Set(['s']), { modo: 'desplazar', minutos: -30 }, []);
+  assert.equal(p.hora_despues, null);
+  assert.deepEqual(p.conflictos, []);
+});
+
+test('días fijos: solo cambian los que coinciden con una sesión movida', () => {
+  const dias = [{ dia: 1, hora: '10:00' }, { dia: 3, hora: '10:00' }, { dia: 4, hora: '19:00' }];
+  // lunes 5 y miércoles 7 de octubre de 2026 pasan de 10:00 a 09:30
+  const cambios = [
+    { fecha: '2026-10-05', hora_antes: '10:00', hora_despues: '09:30' },
+    { fecha: '2026-10-07', hora_antes: '10:00', hora_despues: '09:30' },
+  ];
+  assert.deepEqual(diasFijosActualizados(dias, cambios), [{ dia: 1, hora: '09:30' }, { dia: 3, hora: '09:30' }, { dia: 4, hora: '19:00' }]);
+  // si solo se mueve la del lunes, el miércoles no se toca
+  assert.deepEqual(diasFijosActualizados(dias, [cambios[0]]), [{ dia: 1, hora: '09:30' }, { dia: 3, hora: '10:00' }, { dia: 4, hora: '19:00' }]);
+  // sin cambios reales (o sin días fijos) no cambia nada
+  assert.deepEqual(diasFijosActualizados(dias, [{ fecha: '2026-10-05', hora_antes: '10:00', hora_despues: '10:00' }]), dias);
+  assert.deepEqual(diasFijosActualizados(undefined, cambios), []);
 });
