@@ -86,6 +86,20 @@ export async function crearSesiones(filas) { return comprobar(await sb.from('ses
 export async function actualizarSesion(id, cambios) {
   return comprobar(await sb.from('sesiones').update(cambios).eq('id', id).select().single());
 }
+// Cobro de sesiones de un cliente que paga después (solo administrador; ver sql/13_paga_despues.sql): crea el bono de
+// tipo 'cobro' (ya pagado) y enlaza a él las sesiones elegidas. Si no se pueden enlazar todas, deshace el bono para no
+// dejar un cobro a medias (las sesiones enlazadas se sueltan solas al borrarlo).
+export async function registrarCobroSesiones({ bono, sesionIds }) {
+  const creado = comprobar(await sb.from('bonos').insert(bono).select().single());
+  try {
+    const filas = comprobar(await sb.from('sesiones').update({ cobro_bono_id: creado.id }).in('id', sesionIds).select('id'));
+    if (filas.length !== sesionIds.length) throw new Error(`Solo se pudieron marcar ${filas.length} de ${sesionIds.length} sesiones como cobradas. No se ha registrado el cobro.`);
+  } catch (e) {
+    await sb.from('bonos').delete().eq('id', creado.id);
+    throw e;
+  }
+  return creado;
+}
 // Varias sesiones de golpe: lista = [{ id, cambios }]. Cada una es su propio UPDATE (cada sesión lleva
 // un valor distinto); si alguna falla se avisa cuántas sí se cambiaron, para no dejar al usuario a ciegas.
 export async function actualizarSesiones(lista) {

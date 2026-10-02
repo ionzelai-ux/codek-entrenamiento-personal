@@ -78,6 +78,44 @@ export function consumoPorBono(cliente, ahora = new Date()) {
   return { porBono, sinBono: pendientes };
 }
 
+// ── «Entrena y paga después» (excepcional; lo aprueba el administrador) ───────────────────────────────
+// pago_diferido: 'no' | 'solicitado' (lo pide el entrenador) | 'aprobado' (lo autoriza el administrador).
+// Un cliente aprobado acumula DEUDA: sus sesiones hechas que nadie ha cobrado × su tarifa por sesión. Cuando paga, el
+// administrador elige qué sesiones abona: se crea un bono de tipo 'cobro' y esas sesiones quedan enlazadas a él
+// (sesion.cobro_bono_id). Si además tiene bonos normales, estos cubren primero sus sesiones más antiguas.
+export const esDiferido = c => c?.pago_diferido === 'aprobado';
+
+export function deudaDiferida(c, ahora = new Date()) {
+  if (!esDiferido(c)) return null;
+  const hechas = (c.sesiones || []).filter(s => { const e = estadoEfectivo(s, ahora); return e === 'hecha' || e === 'auto'; })
+    .sort((a, b) => a.fecha.localeCompare(b.fecha) || a.hora.localeCompare(b.hora));
+  const sinCobro = hechas.filter(s => !s.cobro_bono_id);
+  const bonosNormales = (c.bonos || []).filter(b => (b.tipo || 'bono') !== 'cobro').reduce((t, b) => t + (Number(b.sesiones) || 0), 0);
+  const pendientes = sinCobro.slice(Math.min(sinCobro.length, bonosNormales));   // lo que ningún bono ni cobro cubre
+  const tarifa = c.tarifa_sesion === null || c.tarifa_sesion === undefined || c.tarifa_sesion === '' ? null : Number(c.tarifa_sesion);
+  const cobrado = (c.bonos || []).filter(b => b.tipo === 'cobro' && b.pagado_el).reduce((t, b) => t + (Number(b.precio) || 0), 0);
+  return {
+    pendientes, n: pendientes.length, tarifa,
+    importe: tarifa === null ? null : Math.round(pendientes.length * tarifa * 100) / 100,
+    cobradas: hechas.length - sinCobro.length, cobrado: Math.round(cobrado * 100) / 100,
+    reservadas: (c.sesiones || []).filter(s => estadoEfectivo(s, ahora) === 'reservada').length,
+  };
+}
+
+// Datos del bono de tipo 'cobro' que se crea al abonar sesiones (solo el administrador). Devuelve null si no hay sesiones.
+// importe: lo que se cobra en total; si no se indica, n × tarifa.
+export function planCobroSesiones(c, sesionIds, { importe, fecha, metodo } = {}) {
+  const ids = new Set(sesionIds);
+  const elegidas = (c.sesiones || []).filter(s => ids.has(s.id)).sort((a, b) => a.fecha.localeCompare(b.fecha));
+  if (!elegidas.length) return null;
+  const total = importe === undefined || importe === null || importe === '' ? elegidas.length * (Number(c.tarifa_sesion) || 0) : Number(importe);
+  return {
+    bono: { cliente_id: c.id, sesiones: elegidas.length, precio: Math.round(total * 100) / 100, fecha_pago: fecha, fecha_inicio: elegidas[0].fecha,
+      metodo_pago: metodo, pagado_el: fecha, tipo: 'cobro' },
+    sesionIds: elegidas.map(s => s.id),
+  };
+}
+
 // Lo que costaría cada sesión según su último bono (precio ÷ sesiones); null si no tiene ningún bono.
 export function precioSesionEstimado(cliente) {
   const ultimo = [...(cliente.bonos || [])].sort((a, b) => String(a.fecha_pago).localeCompare(String(b.fecha_pago))).pop();
@@ -104,7 +142,8 @@ export function estadoCobro(cliente, hoy = hoyISO(), ahora = new Date()) {
   const programados = bonos.filter(b => estadoPago(b, hoy) === 'programado');
   if (programados.length) return { clave: 'programado', importe: suma([programados[0]]), fecha: programados[0].fecha_pago, n: programados.length, bonos: programados };
   const ultimo = bonos[bonos.length - 1];
-  const clave = creditos(cliente, ahora).restantes <= UMBRAL_RENOVAR ? 'renovar' : 'pagado';
+  // Quien entrena y paga después (aprobado) no renueva bonos: paga sesión a sesión, así que nunca toca «renovar».
+  const clave = cliente.pago_diferido !== 'aprobado' && creditos(cliente, ahora).restantes <= UMBRAL_RENOVAR ? 'renovar' : 'pagado';
   return { clave, importe: Number(ultimo.precio) || 0, fecha: ultimo.fecha_pago, n: 0, bonos: [ultimo] };
 }
 
@@ -222,7 +261,7 @@ export function camposPendientes(c) {
     if (!(c.pot_precio > 0)) falta.push('importe estimado');
   } else {
     const bonos = c.bonos || [];
-    if (!bonos.length) falta.push('bono');
+    if (!bonos.length && c.pago_diferido !== 'aprobado') falta.push('bono');   // quien paga después no tiene por qué tener bono
     else if (bonos.some(b => !b.metodo_pago)) falta.push('método de pago');
   }
   return falta;
@@ -251,7 +290,15 @@ export function incidenciasCliente(c, ahora = new Date()) {
     if (conSesion.length || bonos.length) nueva('media', 'potencial_con_datos', 'Está como potencial pero ya tiene sesiones o bonos: ¿falta convertirlo en cliente?');
     return out;
   }
-  if (!bonos.length) {
+  const dif = deudaDiferida(c, ahora);
+  if (c.pago_diferido === 'solicitado') {
+    nueva('media', 'solicitud_pendiente', `Hay una solicitud pendiente de aprobar para que entrene y pague después${Number(c.tarifa_sesion) ? ` (${fmtE(c.tarifa_sesion)}/sesión)` : ''}.`);
+  }
+  if (dif) {
+    // Entrena y paga después (aprobado): no tener bono es lo normal; lo que importa es lo que debe.
+    if (dif.n) nueva('info', 'deuda_diferida', `Entrena y paga después: debe ${plural(dif.n, 'sesión', 'sesiones')}${dif.importe === null ? ' (sin tarifa)' : ` (${fmtE(dif.importe)})`}.`);
+    if (dif.tarifa === null) nueva('media', 'sin_tarifa', 'Paga después pero no tiene tarifa por sesión: no se puede calcular lo que debe.');
+  } else if (!bonos.length) {
     if (conSesion.length) nueva('alta', 'sesiones_sin_bono', `Tiene ${plural(conSesion.length, 'sesión', 'sesiones')} (${plural(cr.hechas, 'hecha', 'hechas')}) y ningún bono registrado: no consta qué se le ha cobrado.`);
     else nueva('media', 'sin_bono', 'Es cliente pero no tiene ningún bono.');
   } else {

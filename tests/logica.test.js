@@ -7,7 +7,7 @@ import {
   estadoCobro, facturacionMes,
   comisionBono, esDeclaradoPorDefecto, bonosLiquidablesMes, liquidacionMes, totalesComisiones, agruparComisionesPorEntrenador,
   entrenadoresConComision, DEFAULT_CONFIG_COMISIONES, tieneLesionActiva, comisionManual, lineasManualesMes,
-  consumoPorBono, precioSesionEstimado, incidenciasCliente, solapesEntrenadores, revisionDatos,
+  consumoPorBono, precioSesionEstimado, incidenciasCliente, solapesEntrenadores, revisionDatos, deudaDiferida, planCobroSesiones,
   sesionesCambiables, horaNueva, planCambioHorario, diasFijosActualizados, etiquetaMes,
 } from '../js/logica.js';
 
@@ -183,7 +183,7 @@ test('carriles: bloques solapados se reparten, los separados no', () => {
 });
 
 test('info pendiente: ficha completa no falta nada; cada hueco se nombra', () => {
-  const completo = { apellidos: 'Remón', telefono: '600', email: 'a@b.c', fecha_nacimiento: '1990-01-01', lesiones: 'Ninguna', estado: 'efectivo', bonos: [{ metodo_pago: 'efectivo' }] };
+  const completo = { apellidos: 'Ejemplo', telefono: '600', email: 'a@b.c', fecha_nacimiento: '1990-01-01', lesiones: 'Ninguna', estado: 'efectivo', bonos: [{ metodo_pago: 'efectivo' }] };
   assert.deepEqual(camposPendientes(completo), []);
   assert.deepEqual(camposPendientes({ ...completo, apellidos: '  ', email: null }), ['apellidos', 'email']);
   // cliente sin bono / con un bono sin método de pago
@@ -267,9 +267,9 @@ test('etiqueta de mes: este, siguiente, pasado (también cruzando de año) o nad
 const AHORA_REV = new Date(2026, 9, 2, 12, 0);   // 2 oct 2026
 const sx = (id, fecha, hora, estado = 'hecha', extra = {}) => ({ id, fecha, hora, estado, duracion_min: 60, ...extra });
 
-// Patricia Remón tal como está en producción: un bono de 3 sesiones (105 €) y 5 hechas + 1 no vino + 1 reservada
-const patricia = () => ({
-  id: 'pat', nombre: 'Patricia', apellidos: 'Remón', estado: 'efectivo', activo: true, entrenador_id: 'edu',
+// Cliente con un bono corto: un bono de 3 sesiones (105 €) y 5 hechas + 1 no vino + 1 reservada
+const clienteBonoCorto = () => ({
+  id: 'cli', nombre: 'Paula', apellidos: 'Ejemplo', estado: 'efectivo', activo: true, entrenador_id: 'edu',
   bonos: [{ id: 'b1', sesiones: 3, precio: 105, fecha_pago: '2026-09-15', fecha_inicio: '2026-09-15', metodo_pago: 'efectivo' }],
   sesiones: [
     sx('1', '2026-09-14', '10:30'), sx('2', '2026-09-17', '11:15'), sx('3', '2026-09-18', '10:30'), sx('4', '2026-09-21', '11:00'),
@@ -278,7 +278,7 @@ const patricia = () => ({
 });
 
 test('créditos: 5 hechas con un bono de 3 → quedan 0 pero 2 están sin bono (antes esto quedaba escondido)', () => {
-  const cr = creditos(patricia(), AHORA_REV);
+  const cr = creditos(clienteBonoCorto(), AHORA_REV);
   assert.deepEqual([cr.total, cr.hechas, cr.reservadas, cr.noVino, cr.restantes, cr.libres, cr.sinBono], [3, 5, 1, 1, 0, -1, 2]);
   const bien = creditos({ bonos: [{ sesiones: 8 }], sesiones: [sx('a', '2026-09-14', '10:00'), sx('b', '2026-09-15', '10:00')] }, AHORA_REV);
   assert.equal(bien.sinBono, 0);
@@ -286,25 +286,25 @@ test('créditos: 5 hechas con un bono de 3 → quedan 0 pero 2 están sin bono (
 });
 
 test('consumo por bono: las hechas se reparten por orden entre los bonos y lo que sobra queda sin bono', () => {
-  const c = { ...patricia(), bonos: [
+  const c = { ...clienteBonoCorto(), bonos: [
     { id: 'nuevo', sesiones: 8, precio: 280, fecha_pago: '2026-10-01', fecha_inicio: '2026-10-01' },
     { id: 'b1', sesiones: 3, precio: 105, fecha_pago: '2026-09-15', fecha_inicio: '2026-09-15' }] };
   const { porBono, sinBono } = consumoPorBono(c, AHORA_REV);
   assert.deepEqual(porBono.get('b1'), { usadas: 3, total: 3 }, 'el antiguo se gasta primero');
   assert.deepEqual(porBono.get('nuevo'), { usadas: 2, total: 8 });
   assert.equal(sinBono, 0);
-  assert.equal(consumoPorBono(patricia(), AHORA_REV).sinBono, 2);
+  assert.equal(consumoPorBono(clienteBonoCorto(), AHORA_REV).sinBono, 2);
   assert.equal(consumoPorBono({}, AHORA_REV).sinBono, 0);
 });
 
 test('precio por sesión estimado: el del último bono, o nada si no hay bonos', () => {
-  assert.equal(precioSesionEstimado(patricia()), 35);
+  assert.equal(precioSesionEstimado(clienteBonoCorto()), 35);
   assert.equal(precioSesionEstimado({ bonos: [{ sesiones: 8, precio: 336, fecha_pago: '2026-01-01' }, { sesiones: 4, precio: 180, fecha_pago: '2026-05-01' }] }), 45);
   assert.equal(precioSesionEstimado({ bonos: [] }), null);
 });
 
-test('revisión: Patricia → sesiones sin bono (≈ 70 €) y una reservada sin crédito', () => {
-  const inc = incidenciasCliente(patricia(), AHORA_REV);
+test('revisión: bono de 3 con 5 hechas → sesiones sin bono (≈ 70 €) y una reservada sin crédito', () => {
+  const inc = incidenciasCliente(clienteBonoCorto(), AHORA_REV);
   const sinBono = inc.find(i => i.clave === 'sesiones_sin_bono');
   assert.equal(sinBono.nivel, 'alta');
   assert.match(sinBono.texto, /5 sesiones.*suman 3.*2 sesiones sin bono.*70,00/);
@@ -314,9 +314,9 @@ test('revisión: Patricia → sesiones sin bono (≈ 70 €) y una reservada sin
   assert.equal(inc[0].nivel, 'alta', 'lo más grave primero');
 });
 
-test('revisión: un cliente sin bono pero con sesiones (como Natalí), un potencial con sesiones y un cliente sin nada', () => {
-  const natali = { id: 'n', nombre: 'Natalí', estado: 'efectivo', bonos: [], sesiones: ['07', '08', '11', '17', '18'].map(d => sx('n' + d, `2026-09-${d}`, '10:00', 'hecha', { nota: 'Hora no registrada' })) };
-  const i = incidenciasCliente(natali, AHORA_REV);
+test('revisión: un cliente sin bono pero con sesiones (sin ningún bono todavía), un potencial con sesiones y un cliente sin nada', () => {
+  const nora = { id: 'n', nombre: 'Nora', estado: 'efectivo', bonos: [], sesiones: ['07', '08', '11', '17', '18'].map(d => sx('n' + d, `2026-09-${d}`, '10:00', 'hecha', { nota: 'Hora no registrada' })) };
+  const i = incidenciasCliente(nora, AHORA_REV);
   assert.equal(i[0].clave, 'sesiones_sin_bono');
   assert.equal(i[0].nivel, 'alta');
   assert.match(i[0].texto, /5 sesiones.*ningún bono/);
@@ -362,6 +362,83 @@ test('revisión de todos: solapes del mismo entrenador (ignorando horas sin regi
   // la gravedad ordena: una alta va antes que una media
   const grave = { ...mk('G', 'edu', []), bonos: [], sesiones: [sx('g1', '2026-09-14', '10:00')] };
   assert.equal(revisionDatos([a, b, grave], AHORA_REV)[0].cliente.id, 'G');
+});
+
+// ── Entrena y paga después ───────────────────────────────────────────────────
+// El mismo caso sin el bono inicial: 5 hechas, 1 no vino, 1 reservada, tarifa 35 €
+const clienteDiferida = (extra = {}) => ({
+  id: 'cli', nombre: 'Paula', apellidos: 'Ejemplo', estado: 'efectivo', activo: true, entrenador_id: 'edu',
+  pago_diferido: 'aprobado', tarifa_sesion: 35, bonos: [],
+  sesiones: [
+    sx('1', '2026-09-14', '10:30'), sx('2', '2026-09-17', '11:15'), sx('3', '2026-09-18', '10:30'), sx('4', '2026-09-21', '11:00'),
+    sx('x', '2026-09-25', '10:30', 'no_vino'), sx('5', '2026-09-30', '10:00'), sx('6', '2026-10-05', '11:00', 'reservada'),
+  ], ...extra,
+});
+
+test('deuda diferida: 5 hechas × 35 € = 175 € por cobrar; el «no vino» y la reservada no cuentan', () => {
+  const d = deudaDiferida(clienteDiferida(), AHORA_REV);
+  assert.deepEqual([d.n, d.importe, d.tarifa, d.cobradas, d.cobrado, d.reservadas], [5, 175, 35, 0, 0, 1]);
+  assert.deepEqual(d.pendientes.map(s => s.id), ['1', '2', '3', '4', '5']);
+});
+
+test('deuda diferida: al cobrar 2 sesiones elegidas, la deuda baja justo esas 2 (aunque no sean las más antiguas)', () => {
+  const c = clienteDiferida();
+  const plan = planCobroSesiones(c, ['2', '4'], { fecha: '2026-10-02', metodo: 'efectivo' });
+  assert.deepEqual(plan.sesionIds, ['2', '4']);
+  assert.deepEqual(plan.bono, { cliente_id: 'cli', sesiones: 2, precio: 70, fecha_pago: '2026-10-02', fecha_inicio: '2026-09-17',
+    metodo_pago: 'efectivo', pagado_el: '2026-10-02', tipo: 'cobro' }, 'importe por defecto = 2 × 35 €; ya pagado');
+  // tras aplicarlo: el bono de cobro existe y las sesiones quedan enlazadas
+  const tras = clienteDiferida({
+    bonos: [{ id: 'cb', ...plan.bono }],
+    sesiones: c.sesiones.map(s => (plan.sesionIds.includes(s.id) ? { ...s, cobro_bono_id: 'cb' } : s)),
+  });
+  const d = deudaDiferida(tras, AHORA_REV);
+  assert.deepEqual(d.pendientes.map(s => s.id), ['1', '3', '5'], 'quedan por cobrar las otras tres');
+  assert.deepEqual([d.n, d.importe, d.cobradas, d.cobrado], [3, 105, 2, 70]);
+});
+
+test('cobro: el importe se puede cambiar (descuento) y no hay plan sin sesiones elegidas', () => {
+  const c = clienteDiferida();
+  assert.equal(planCobroSesiones(c, ['1', '2'], { importe: 60, fecha: '2026-10-02', metodo: 'tarjeta' }).bono.precio, 60);
+  assert.equal(planCobroSesiones(c, [], { fecha: '2026-10-02', metodo: 'efectivo' }), null);
+  assert.equal(planCobroSesiones(c, ['no-existe'], { fecha: '2026-10-02', metodo: 'efectivo' }), null);
+});
+
+test('deuda diferida: sin tarifa no hay importe; con un bono normal este cubre primero las más antiguas; solo si está aprobado', () => {
+  assert.equal(deudaDiferida(clienteDiferida({ tarifa_sesion: null }), AHORA_REV).importe, null);
+  assert.equal(deudaDiferida(clienteDiferida({ tarifa_sesion: null }), AHORA_REV).n, 5);
+  const conBono = clienteDiferida({ bonos: [{ id: 'b', sesiones: 2, precio: 70, tipo: 'bono' }] });
+  assert.deepEqual(deudaDiferida(conBono, AHORA_REV).pendientes.map(s => s.id), ['3', '4', '5']);
+  assert.equal(deudaDiferida(clienteDiferida({ pago_diferido: 'solicitado' }), AHORA_REV), null);
+  assert.equal(deudaDiferida(clienteDiferida({ pago_diferido: 'no' }), AHORA_REV), null);
+  assert.equal(deudaDiferida(clienteDiferida({ pago_diferido: undefined }), AHORA_REV), null);
+});
+
+test('info pendiente: quien paga después (aprobado) no necesita bono, pero uno solo solicitado sí', () => {
+  const ficha = { apellidos: 'X', telefono: '6', email: 'e', fecha_nacimiento: '1990-01-01', lesiones: 'Ninguna', estado: 'efectivo', bonos: [] };
+  assert.deepEqual(camposPendientes(ficha), ['bono']);
+  assert.deepEqual(camposPendientes({ ...ficha, pago_diferido: 'aprobado' }), []);
+  assert.deepEqual(camposPendientes({ ...ficha, pago_diferido: 'solicitado' }), ['bono']);
+});
+
+test('quien paga después no pasa a «RENOVAR»', () => {
+  const pagado = { id: 'cb', sesiones: 5, precio: 175, fecha_pago: '2026-10-02', pagado_el: '2026-10-02', tipo: 'cobro' };
+  const normal = { ...clienteDiferida({ pago_diferido: 'no', bonos: [pagado] }) };
+  assert.equal(estadoCobro(normal, '2026-10-02', AHORA_REV).clave, 'renovar', 'un cliente normal con el bono gastado sí');
+  assert.equal(estadoCobro(clienteDiferida({ bonos: [pagado] }), '2026-10-02', AHORA_REV).clave, 'pagado');
+});
+
+test('revisión: un cliente que paga después no sale como incoherente; una solicitud pendiente sí avisa', () => {
+  const inc = incidenciasCliente(clienteDiferida(), AHORA_REV);
+  assert.deepEqual(inc.map(i => [i.nivel, i.clave]), [['info', 'deuda_diferida']]);
+  assert.match(inc[0].texto, /debe 5 sesiones.*175,00/);
+  assert.ok(incidenciasCliente(clienteDiferida({ tarifa_sesion: null }), AHORA_REV).some(i => i.clave === 'sin_tarifa' && i.nivel === 'media'));
+  // solicitado (aún no aprobado): se sigue tratando como un cliente normal (rojo) y además avisa de la solicitud
+  const sol = incidenciasCliente(clienteDiferida({ pago_diferido: 'solicitado' }), AHORA_REV).map(i => i.clave);
+  assert.ok(sol.includes('solicitud_pendiente') && sol.includes('sesiones_sin_bono'));
+  // aprobado y sin deuda: nada que avisar
+  const alDia = clienteDiferida({ sesiones: [sx('1', '2026-09-14', '10:00', 'hecha', { cobro_bono_id: 'cb' })], bonos: [{ id: 'cb', sesiones: 1, precio: 35, tipo: 'cobro', pagado_el: '2026-09-15' }] });
+  assert.deepEqual(incidenciasCliente(alDia, AHORA_REV), []);
 });
 
 // ── Comisiones de los entrenadores ──────────────────────────────────────────
@@ -462,7 +539,7 @@ test('comisión manual: clases × precio por clase, % del origen o el que se esc
 
 test('líneas manuales del mes: los bonos excluidos (con sus campos guardados) y las líneas libres de ese mes', () => {
   const cfg = DEFAULT_CONFIG_COMISIONES;
-  const cl = [{ entrenador_id: 'edu', nombre: 'Natalí', apellidos: '', origen: 'codek', bonos: [
+  const cl = [{ entrenador_id: 'edu', nombre: 'Nora', apellidos: '', origen: 'codek', bonos: [
     { id: 'b1', precio: 336, metodo_pago: 'efectivo', pagado_el: '2026-10-02' },
     { id: 'b2', precio: 100, metodo_pago: 'efectivo', pagado_el: '2026-10-03' }] }];
   const ov = { b1: { excluido: true, manual_clases: 6, manual_precio: 40 }, b2: { declarado: true } };
@@ -473,7 +550,7 @@ test('líneas manuales del mes: los bonos excluidos (con sus campos guardados) y
   ];
   const lineas = lineasManualesMes(filas, libres, '2026-10', cfg, ov);
   assert.deepEqual(lineas.map(l => [l.tipo, l.id]), [['bono', 'b1'], ['libre', 'l1']], 'solo el excluido y la libre de octubre');
-  assert.equal(lineas[0].concepto, 'Natalí');
+  assert.equal(lineas[0].concepto, 'Nora');
   assert.equal(lineas[0].comision, 96, '6 × 40 € × 40 % (Codek)');
   assert.equal(lineas[0].pct_manual, null, 'sin % escrito: se ve el por defecto');
   // libre: 2 × 50 = 100 ÷ 1,35 (nómina) × 60 % (externo) = 44,44…

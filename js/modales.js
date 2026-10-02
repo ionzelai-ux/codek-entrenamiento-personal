@@ -6,6 +6,7 @@ import {
   hoyISO, precioBonoSugerido, precioHoraSugerido, buscarConflictos, generarFechas,
   creditos, estadoEfectivo, ocupaCredito, diaSemana,
   sesionesCambiables, horaNueva, planCambioHorario, diasFijosActualizados,
+  esDiferido, deudaDiferida, planCobroSesiones,
 } from './logica.js';
 import { OPCIONES_BONO, DURACION_SESION_MIN } from './config.js';
 
@@ -248,7 +249,7 @@ export function modalSesion({ sesion = null, fecha = hoyISO(), hora = '', client
       if (!ok) return;
     }
     const antes = edit ? ocupaCredito(estadoEfectivo(sesion)) : false;
-    if (!antes && ocupaCredito(datos.estado) && creditos(cli).libres < 1) {
+    if (!antes && ocupaCredito(datos.estado) && !esDiferido(cli) && creditos(cli).libres < 1) {
       const ok = await dialogo({
         titulo: 'Sin créditos disponibles',
         mensaje: `<p>${esc(nombreCompleto(cli))} no tiene sesiones libres en su bono. ¿Guardar igualmente?</p>`,
@@ -268,7 +269,7 @@ export function modalSesion({ sesion = null, fecha = hoyISO(), hora = '', client
 export async function cambiarEstadoSesion(sesion, nuevo) {
   const cli = clienteDe(sesion.cliente_id);
   const antes = ocupaCredito(estadoEfectivo(sesion));
-  if (!antes && ocupaCredito(nuevo) && cli && creditos(cli).libres < 1) {
+  if (!antes && ocupaCredito(nuevo) && cli && !esDiferido(cli) && creditos(cli).libres < 1) {
     const ok = await dialogo({
       titulo: 'Sin créditos disponibles',
       mensaje: `<p>${esc(nombreCompleto(cli))} no tiene sesiones libres en su bono. ¿Continuar igualmente?</p>`,
@@ -581,6 +582,121 @@ export function modalGenerar(c, { bono = null, cantidad = null } = {}) {
     m.cerrar();
     await bus.recargar();
     toast(elegidas.length === 1 ? '1 sesión creada' : `${elegidas.length} sesiones creadas`);
+  });
+}
+
+// ── «Entrena y paga después»: solicitar, aprobar o cambiar la tarifa ───────
+// modo: 'pedir' (el entrenador lo solicita; si lo hace el administrador queda autorizado directamente),
+//       'aprobar' (el administrador aprueba una solicitud) o 'tarifa' (el administrador cambia la tarifa de uno ya aprobado).
+const aTarifa = texto => { const t = String(texto).trim().replace(',', '.'); if (t === '') return null; const n = Number(t); return Number.isFinite(n) ? n : NaN; };
+export function modalTarifaDiferido(c, modo) {
+  if (!c) return;
+  const admin = esAdmin();
+  const ESTADO = modo === 'tarifa' ? c.pago_diferido : (admin ? 'aprobado' : 'solicitado');
+  const TEXTOS = {
+    pedir: [admin ? 'Autorizar «entrena y paga después»' : 'Solicitar «entrena y paga después»', admin ? 'Autorizar' : 'Enviar solicitud'],
+    aprobar: ['Aprobar «entrena y paga después»', 'Aprobar'],
+    tarifa: ['Cambiar la tarifa por sesión', 'Guardar tarifa'],
+  }[modo];
+  const m = abrirModal(`
+    <div class="modal-title">${TEXTOS[0]}</div>
+    <p class="sub">${esc(nombreCompleto(c))} · ${esc(entrenadorDe(c.entrenador_id)?.nombre || '')}</p>
+    <form novalidate>
+      ${modo === 'tarifa' ? '' : `<p class="hint" style="margin:-4px 0 12px">${admin
+        ? 'Sus sesiones se podrán generar sin bono pagado y se irán acumulando como deuda hasta que las marques como cobradas.'
+        : 'Es una <b>excepción</b>: el administrador tiene que aprobarla. Hasta entonces se trata como un cliente normal. Si la aprueba, sus sesiones se irán acumulando como deuda hasta que se cobren.'}</p>`}
+      <div class="form-group"><label class="form-label">Tarifa por sesión (€)</label>
+        <input class="form-input" name="tarifa" type="text" inputmode="decimal" autocomplete="off" value="${esc(c.tarifa_sesion ?? '')}" placeholder="p. ej. 35">
+        <div class="hint">Lo que paga por cada sesión; con ella se calcula lo que debe. ${admin ? 'Puedes dejarla vacía y ponerla después.' : 'Una vez aprobada solo la podrá cambiar el administrador.'}</div></div>
+      ${acciones(TEXTOS[1])}
+    </form>`);
+  const form = m.el.querySelector('form');
+  bindCerrar(m);
+  alEnviar(m, form, async () => {
+    const tarifa = aTarifa(form.elements.tarifa.value);
+    if (Number.isNaN(tarifa) || (tarifa !== null && tarifa < 0)) throw new Error('La tarifa tiene que ser un número (por ejemplo 35 o 37,5)');
+    await S.api.guardarCliente({ id: c.id, pago_diferido: ESTADO, tarifa_sesion: tarifa });
+    m.cerrar();
+    await bus.recargar();
+    toast(modo === 'tarifa' ? 'Tarifa guardada' : ESTADO === 'aprobado' ? 'Autorizado: entrena y paga después' : 'Solicitud enviada al administrador');
+  });
+}
+
+// ── Marcar sesiones como cobradas (solo administrador) ────────────────────
+// Se eligen las sesiones que han abonado (han venido 5 y han pagado 2: se marcan esas 2). Crea un bono de tipo «cobro»
+// ya pagado y enlaza a él esas sesiones, así que el cobro entra solo en el Resumen y en Comisiones.
+export function modalCobrarSesiones(c) {
+  const d = c && deudaDiferida(c);
+  if (!d || !d.n) { toast('Este cliente no tiene sesiones por cobrar.', true); return; }
+  const m = abrirModal(`
+    <div class="modal-title">Marcar sesiones como cobradas</div>
+    <p class="sub">${esc(nombreCompleto(c))} · debe ${d.n} ${d.n === 1 ? 'sesión' : 'sesiones'}${d.importe === null ? ' (sin tarifa)' : ` · ${esc(fmtEUR(d.importe))}`}</p>
+    <form novalidate>
+      <div class="section-mini">¿Qué sesiones te han pagado?</div>
+      <div class="sel-rapida" data-selrapida>Marcar:
+        <button type="button" class="btn btn-sm btn-secondary" data-sel="todas">Todas</button>
+        <button type="button" class="btn btn-sm btn-secondary" data-sel="ninguna">Ninguna</button></div>
+      <div class="gen-lista" data-lista></div>
+      <div class="form-row3" style="margin-top:14px">
+        <div class="form-group"><label class="form-label">Importe cobrado (€) *</label><input class="form-input" name="importe" type="text" inputmode="decimal" autocomplete="off"></div>
+        <div class="form-group"><label class="form-label">Fecha del cobro *</label><input class="form-input" name="fecha" type="date" value="${hoyISO()}"></div>
+        <div class="form-group"><label class="form-label">Método *</label>${segHTML('metodo_pago', METODOS_PAGO, '')}</div>
+      </div>
+      <div class="hint" data-resumen></div>
+      ${acciones('Cobrar')}
+    </form>`, 'modal-lg');
+  const form = m.el.querySelector('form');
+  const lista = m.el.querySelector('[data-lista]');
+  const resumen = m.el.querySelector('[data-resumen]');
+  const btn = form.querySelector('button[type=submit]');
+  bindCerrar(m); bindSeg(m.el);
+  const marcado = new Set();
+  let importeAMano = false;          // si se escribe el importe a mano deja de recalcularse solo
+  const sugerido = n => (d.tarifa === null ? '' : String(Math.round(n * d.tarifa * 100) / 100).replace('.', ','));
+  const leerImporte = () => { const t = form.elements.importe.value.trim().replace(',', '.'); const n = Number(t); return t === '' || !Number.isFinite(n) ? NaN : n; };
+
+  function pintar() {
+    lista.innerHTML = d.pendientes.map((s, i) => `<label class="gen-fila"><input type="checkbox" data-i="${i}" ${marcado.has(s.id) ? 'checked' : ''}>
+      <span class="gf-f">${fmtFechaDia(s.fecha)}</span><span class="gf-h">${esc(s.hora)}</span>${d.tarifa === null ? '' : `<span class="gf-h">${esc(fmtEUR(d.tarifa))}</span>`}</label>`).join('');
+    const n = marcado.size;
+    if (!importeAMano) form.elements.importe.value = n ? sugerido(n) : '';
+    const imp = leerImporte();
+    resumen.innerHTML = n
+      ? `Cobras <b>${Number.isNaN(imp) ? '—' : esc(fmtEUR(imp))}</b> por ${n} ${n === 1 ? 'sesión' : 'sesiones'}. Quedarán <b>${d.n - n}</b> por cobrar${d.tarifa === null ? '' : ` (${esc(fmtEUR((d.n - n) * d.tarifa))})`}.`
+      : 'Marca las sesiones que te han pagado.';
+    btn.disabled = n === 0;
+    btn.textContent = `Cobrar ${n} ${n === 1 ? 'sesión' : 'sesiones'}`;
+  }
+  lista.addEventListener('change', e => {
+    const i = e.target.dataset.i;
+    if (i === undefined) return;
+    const id = d.pendientes[Number(i)].id;
+    if (e.target.checked) marcado.add(id); else marcado.delete(id);
+    pintar();
+  });
+  m.el.querySelector('[data-selrapida]').addEventListener('click', e => {
+    const b = e.target.closest('[data-sel]');
+    if (!b) return;
+    marcado.clear();
+    if (b.dataset.sel === 'todas') d.pendientes.forEach(s => marcado.add(s.id));
+    pintar();
+  });
+  form.elements.importe.addEventListener('input', () => { importeAMano = true; pintar(); });
+  pintar();
+
+  alEnviar(m, form, async () => {
+    const val = nuevoValidador(m.el);
+    const importe = leerImporte(), metodo = segVal(m.el, 'metodo_pago'), fecha = form.elements.fecha.value;
+    val.exige(!Number.isNaN(importe) && importe >= 0, 'importe', 'importe cobrado');
+    val.exige(fecha, 'fecha', 'fecha del cobro');
+    val.exige(metodo, 'metodo_pago', 'método de pago');
+    val.cierra();
+    if (!marcado.size) throw new Error('Marca al menos una sesión');
+    const plan = planCobroSesiones(c, [...marcado], { importe, fecha, metodo });
+    await S.api.registrarCobroSesiones(plan);
+    m.cerrar();
+    await bus.recargar();
+    toast(`${plan.sesionIds.length === 1 ? '1 sesión cobrada' : `${plan.sesionIds.length} sesiones cobradas`} · ${fmtEUR(plan.bono.precio)}`);
   });
 }
 

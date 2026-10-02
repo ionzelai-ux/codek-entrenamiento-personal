@@ -16,12 +16,12 @@ let actual = null;
 
 function cliente(datos) {
   const c = { id: nuevoId(), apellidos: '', telefono: '', email: '', fecha_nacimiento: null, notas: '', activo: true,
-    pot_sesiones_bono: null, pot_veces_semana: null, pot_precio: null, dias_fijos: [], ...datos };
+    pot_sesiones_bono: null, pot_veces_semana: null, pot_precio: null, dias_fijos: [], pago_diferido: 'no', tarifa_sesion: null, ...datos };
   clientes.push(c);
   return c;
 }
 function bono(c, sesionesN, precio, pago, inicio, metodo_pago = 'tarjeta', pagado_el = null) {
-  bonos.push({ id: nuevoId(), cliente_id: c.id, sesiones: sesionesN, precio, fecha_pago: pago, fecha_inicio: inicio, metodo_pago, pagado_el });
+  bonos.push({ id: nuevoId(), cliente_id: c.id, sesiones: sesionesN, precio, fecha_pago: pago, fecha_inicio: inicio, metodo_pago, pagado_el, tipo: 'bono' });
 }
 function sesion(c, fecha, hora, estado = 'reservada') {
   sesiones.push({ id: nuevoId(), cliente_id: c.id, bono_id: null, fecha, hora, duracion_min: 60, estado, nota: '' });
@@ -49,15 +49,21 @@ function sesion(c, fecha, hora, estado = 'reservada') {
   const nerea = cliente({ entrenador_id: 'p-jes', nombre: 'Nerea', apellidos: 'Demo Vidal', estado: 'efectivo', origen: 'codek', telefono: '600 000 003' });
   bono(nerea, 4, 180, addDias(lun, -30), addDias(lun, -30), 'efectivo', addDias(lun, -30));
   [-28, -21].forEach(n => sesion(nerea, addDias(lun, n), '09:00', 'hecha'));
-  // Como Patricia en producción: bono de 3 sesiones pero ya lleva 5 hechas (+1 no vino, +1 reservada) → «SIN BONO»
+  // Bono de 3 sesiones pero ya lleva 5 hechas (+1 no vino, +1 reservada) → «SIN BONO»
   const marina = cliente({ entrenador_id: 'p-edu', nombre: 'Marina', apellidos: 'Demo Sin Bono', estado: 'efectivo', origen: 'externo', telefono: '600 000 005', lesiones: 'Ninguna' });
   bono(marina, 3, 105, addDias(lun, -14), addDias(lun, -14), 'efectivo');
   [-14, -11, -10, -7, -2].forEach(n => sesion(marina, addDias(lun, n), '11:30', 'hecha'));
   sesion(marina, addDias(lun, -4), '11:30', 'no_vino');
   sesion(marina, addDias(lun, 7), '11:30');
-  // Como Natalí: sesiones hechas y ningún bono todavía
-  const sofia = cliente({ entrenador_id: 'p-edu', nombre: 'Sofía', apellidos: 'Demo Sin Bono Alguno', estado: 'efectivo', origen: 'codek', telefono: '600 000 006', lesiones: 'Ninguna' });
-  [-12, -9, -5].forEach(n => { sesion(sofia, addDias(lun, n), '10:00', 'hecha'); sesiones[sesiones.length - 1].nota = 'Hora no registrada'; });
+  // Entrena y paga después, ya aprobado por el administrador (35 €/sesión): 5 hechas = 175 € por cobrar
+  const sofia = cliente({ entrenador_id: 'p-edu', nombre: 'Sofía', apellidos: 'Demo Paga Después', estado: 'efectivo', origen: 'codek', telefono: '600 000 006', lesiones: 'Ninguna',
+    pago_diferido: 'aprobado', tarifa_sesion: 35 });
+  [-18, -15, -12, -9, -5].forEach(n => sesion(sofia, addDias(lun, n), '09:00', 'hecha'));
+  sesion(sofia, addDias(lun, 8), '09:00');
+  // Eduardo pide que entrene y pague después; el administrador todavía no lo ha aprobado
+  const teo = cliente({ entrenador_id: 'p-edu', nombre: 'Teo', apellidos: 'Demo Solicitud', estado: 'efectivo', origen: 'codek', telefono: '600 000 007', lesiones: 'Ninguna',
+    pago_diferido: 'solicitado', tarifa_sesion: 30 });
+  [-10, -3].forEach(n => sesion(teo, addDias(lun, n), '12:00', 'hecha'));
   // Bono con pago programado para el mes siguiente
   const ivan = cliente({ entrenador_id: 'p-edu', nombre: 'Iván', apellidos: 'Demo Ortiz', estado: 'efectivo', origen: 'externo', telefono: '600 000 004' });
   bono(ivan, 8, 336, addDias(hoy.slice(0, 7) + '-01', 35).slice(0, 7) + '-05', addDias(hoy.slice(0, 7) + '-01', 35).slice(0, 7) + '-05', 'transferencia');
@@ -148,15 +154,28 @@ export async function listarClientes() {
     sesiones: sesiones.filter(s => s.cliente_id === c.id),
   })));
 }
+// Como el disparador de la base de datos (sql/13): solo el administrador aprueba un pago diferido y toca uno aprobado.
+function controlPagoDiferido(antes, campos) {
+  if (actual.rol === 'admin') return;
+  if ('pago_diferido' in campos || 'tarifa_sesion' in campos) {
+    const nuevo = campos.pago_diferido ?? antes?.pago_diferido ?? 'no';
+    if (antes?.pago_diferido === 'aprobado' && (nuevo !== 'aprobado' || ('tarifa_sesion' in campos && campos.tarifa_sesion !== antes.tarifa_sesion))) {
+      throw new Error('Solo el administrador puede cambiar un pago diferido ya aprobado');
+    }
+    if (nuevo === 'aprobado' && antes?.pago_diferido !== 'aprobado') throw new Error('Solo el administrador puede aprobar que un cliente entrene y pague después');
+  }
+}
 export async function guardarCliente(c) {
   const { id, bonos: _b, sesiones: _s, ...campos } = c;
   if (id) {
     const ex = clientes.find(x => x.id === id);
     if (!ex || !idsVisibles().has(id)) throw new Error('Cliente no encontrado');
+    controlPagoDiferido(ex, campos);
     Object.assign(ex, campos);
     return clonar(ex);
   }
   if (actual.rol !== 'admin' && campos.entrenador_id !== actual.id) throw new Error('No puedes crear clientes para otro entrenador');
+  controlPagoDiferido(null, campos);
   return clonar(cliente(campos));
 }
 export async function eliminarCliente(id) {
@@ -168,7 +187,8 @@ export async function eliminarCliente(id) {
 const SOLO_ADMIN_PAGO = 'Solo el administrador puede cambiar el estado de pago de un bono';
 export async function crearBono(b) {
   if (actual.rol !== 'admin' && b.pagado_el) throw new Error(SOLO_ADMIN_PAGO);
-  const n = { id: nuevoId(), pagado_el: null, ...b }; bonos.push(n); return clonar(n);
+  if (actual.rol !== 'admin' && b.tipo === 'cobro') throw new Error('Solo el administrador puede registrar cobros');
+  const n = { id: nuevoId(), pagado_el: null, tipo: 'bono', ...b }; bonos.push(n); return clonar(n);
 }
 export async function actualizarBono(id, cambios) {
   const b = bonos.find(x => x.id === id);
@@ -177,7 +197,10 @@ export async function actualizarBono(id, cambios) {
   Object.assign(b, cambios);
   return clonar(b);
 }
-export async function eliminarBono(id) { bonos.splice(bonos.findIndex(b => b.id === id), 1); }
+export async function eliminarBono(id) {
+  bonos.splice(bonos.findIndex(b => b.id === id), 1);
+  for (const s of sesiones) if (s.cobro_bono_id === id) s.cobro_bono_id = null;   // como el on delete set null de la base de datos
+}
 
 // ── Comisiones (como la RLS real: solo el administrador puede ver o tocar esto) ──
 const SOLO_ADMIN_COMISION = 'Solo el administrador puede ver las comisiones';
@@ -235,10 +258,12 @@ export async function sesionesEntre(desde, hasta, entrenadorId = null) {
     .map(({ s, c }) => ({ ...s, clientes: { id: c.id, nombre: c.nombre, apellidos: c.apellidos, entrenador_id: c.entrenador_id } }))
     .sort((a, b) => a.fecha.localeCompare(b.fecha) || a.hora.localeCompare(b.hora)));
 }
+const SOLO_ADMIN_COBRO = 'Solo el administrador puede marcar sesiones como cobradas';
 export async function crearSesiones(filas) {
   const ids = idsVisibles();
   return clonar(filas.map(f => {
     if (!ids.has(f.cliente_id)) throw new Error('Cliente no accesible');
+    if (actual.rol !== 'admin' && f.cobro_bono_id) throw new Error(SOLO_ADMIN_COBRO);
     const n = { id: nuevoId(), bono_id: null, nota: '', duracion_min: 60, estado: 'reservada', ...f };
     sesiones.push(n);
     return n;
@@ -246,6 +271,7 @@ export async function crearSesiones(filas) {
 }
 export async function actualizarSesion(id, cambios) {
   const s = sesiones.find(x => x.id === id);
+  if (actual.rol !== 'admin' && 'cobro_bono_id' in cambios && (cambios.cobro_bono_id ?? null) !== (s.cobro_bono_id ?? null)) throw new Error(SOLO_ADMIN_COBRO);
   Object.assign(s, cambios);
   return clonar(s);
 }
@@ -255,7 +281,19 @@ export async function actualizarSesiones(lista) {
   for (const { id, cambios } of lista) {
     const s = sesiones.find(x => x.id === id);
     if (!s || !ids.has(s.cliente_id)) throw new Error('Sesión no accesible');
+    if (actual.rol !== 'admin' && 'cobro_bono_id' in cambios && (cambios.cobro_bono_id ?? null) !== (s.cobro_bono_id ?? null)) throw new Error(SOLO_ADMIN_COBRO);
     Object.assign(s, cambios);
   }
+}
+// Cobro de sesiones de quien paga después (solo administrador): bono de tipo 'cobro' + sesiones enlazadas.
+export async function registrarCobroSesiones({ bono, sesionIds }) {
+  if (actual.rol !== 'admin') throw new Error('Solo el administrador puede registrar cobros');
+  const ids = idsVisibles();
+  const elegidas = sesionIds.map(id => sesiones.find(s => s.id === id));
+  if (elegidas.some(s => !s || !ids.has(s.cliente_id))) throw new Error('Sesión no accesible');
+  const creado = { id: nuevoId(), ...bono };
+  bonos.push(creado);
+  for (const s of elegidas) s.cobro_bono_id = creado.id;
+  return clonar(creado);
 }
 export async function eliminarSesion(id) { sesiones.splice(sesiones.findIndex(s => s.id === id), 1); }

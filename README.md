@@ -122,6 +122,16 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   clientes activos — sesiones hechas sin bono, reservas sin crédito, reservas pasadas sin confirmar (cuentan como hechas),
   sesiones repetidas, solapes del mismo entrenador (ignorando horas sin registrar y «no vino»), potenciales con
   sesiones, bonos sin método de pago — ordenadas por gravedad, con enlace a cada ficha.
+- **Entrena y paga después** (excepcional, con aprobación; `sql/13_paga_despues.sql`): hay clientes que entrenan y pagan
+  más tarde. En la ficha de un cliente, el entrenador marca «Entrena y paga después» (con su tarifa por sesión) y queda
+  como *solicitado*; **solo el administrador lo aprueba o lo rechaza** (lo impone la base de datos con disparadores, no
+  solo la pantalla). Un cliente aprobado no da avisos de «sin bono»: sus sesiones hechas sin cobrar se acumulan como
+  **deuda** (sesiones × tarifa), visible en la ficha (Realizadas · Cobradas · Por cobrar), en la lista, en el aviso de cobros
+  y en el Resumen («Por cobrar · entrenan y pagan después»). Cuando paga, el administrador pulsa «Marcar como cobradas»,
+  elige **qué sesiones** le han abonado (han venido 5 y han pagado 2: marca esas 2), el importe, la fecha y el método: se
+  crea un bono de tipo `cobro` ya pagado y esas sesiones quedan enlazadas a él (`sesiones.cobro_bono_id`), así que el
+  cobro entra solo en «Cobrado» del Resumen y en Comisiones. «↩ Deshacer cobro» las devuelve a «por cobrar». Quien paga
+  después nunca pasa a «Renovar» ni necesita bono para no figurar con «info pendiente».
 - **Renovar**: si el último bono de un cliente está pagado y le quedan 2 sesiones o menos (o se agotó) sin que haya
   un bono nuevo, se marca «RENOVAR» con el importe del último bono como referencia.
 - **Resumen → Facturación prevista**: la fecha de pago de cada bono decide en qué mes cuenta; muestra el total de

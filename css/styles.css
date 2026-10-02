@@ -315,6 +315,20 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
 .tabla-com .check { white-space: nowrap; }
 .com-incluir { text-align: center; }
 .com-incluir input { accent-color: var(--red); width: 16px; height: 16px; cursor: pointer; }
+/* Entrena y paga después */
+:root { --violeta: #9b7bd6; }
+.chip.diferido { border-color: var(--violeta); color: #fff; background: rgba(155,123,214,.28); font-weight: 700; }
+.alert-diferido { background: rgba(155,123,214,.12); border-color: var(--violeta); color: #c9b6f0; }
+.dif-panel { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 18px;
+  border: 1px dashed var(--border); font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.dif-panel b { color: var(--text); }
+.dif-acciones { display: flex; gap: 8px; flex-wrap: wrap; }
+.credit-widget.balance { border-color: var(--violeta); }
+.dif-pend { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); font-family: var(--mono); font-size: 11px; color: var(--muted); line-height: 1.7; }
+.dif-pend b { color: var(--text); }
+.sess-cobrada { margin-left: 4px; }
+.tabla tfoot td { border-top: 2px solid var(--border); border-bottom: none; padding-top: 12px; }
+
 /* Revisión de datos */
 .rev-n { font-weight: 700; }
 .rev-n.rev-alta { color: #ff6b6b; } .rev-n.rev-media { color: var(--yellow); } .rev-n.rev-ok { color: var(--green-light); }

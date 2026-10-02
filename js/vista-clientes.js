@@ -3,9 +3,12 @@ import { S, bus, esAdmin, entrenadorDe, nombreCompleto, clienteDe, entrenadorFil
 import { esc, abrirModal, dialogo, toast, fmtEUR, fmtFecha, fmtFechaDia, textoDias, etiquetaMetodo, filtroEntrenadorHTML } from './util.js';
 import {
   hoyISO, creditos, consumoPorBono, estadoEfectivo, estadoPago, estadoCobro, edad, camposPendientes, tieneLesionActiva,
-  incidenciasCliente, revisionDatos,
+  incidenciasCliente, revisionDatos, esDiferido, deudaDiferida,
 } from './logica.js';
-import { modalCliente, modalConvertir, modalBono, modalEditarBono, modalGenerar, modalCambiarHorario, modalSesion, cambiarEstadoSesion } from './modales.js';
+import {
+  modalCliente, modalConvertir, modalBono, modalEditarBono, modalGenerar, modalCambiarHorario, modalSesion, cambiarEstadoSesion,
+  modalTarifaDiferido, modalCobrarSesiones,
+} from './modales.js';
 
 const ETIQUETA = { reservada: 'RESERV.', hecha: 'HECHA', no_vino: 'NO VINO', auto: 'AUTO' };
 
@@ -23,23 +26,34 @@ function base() {
 function filtrados() {
   const hoy = hoyISO();
   return base()
-    .filter(c => S.cli.pago === 'todos' || estadoCobro(c, hoy)?.clave === S.cli.pago)
+    .filter(c => {
+      const f = S.cli.pago;
+      if (f === 'todos') return true;
+      if (f === 'solicitud') return c.pago_diferido === 'solicitado';                     // solicitudes de «paga después» por aprobar
+      if (f === 'deuda') return (deudaDiferida(c)?.n || 0) > 0;                          // aprobados con sesiones por cobrar
+      return estadoCobro(c, hoy)?.clave === f;
+    })
     .sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es'));
 }
 
-// «3 pendientes · 825 € por cobrar · 2 por renovar»: pulsando cada parte se filtra la lista.
+// «3 pendientes · 825 € por cobrar · 2 por renovar · 2 con sesiones por cobrar»: pulsando cada parte se filtra la lista.
 function cobrosHTML() {
   const hoy = hoyISO();
-  let pend = 0, importe = 0, renovar = 0;
+  let pend = 0, importe = 0, renovar = 0, deuda = 0, deudaImporte = 0, sinTarifa = 0, solicitudes = 0;
   for (const c of base().filter(x => x.activo)) {
     const e = estadoCobro(c, hoy);
     if (e?.clave === 'pendiente') { pend++; importe += e.importe; } else if (e?.clave === 'renovar') renovar++;
+    const d = deudaDiferida(c);
+    if (d?.n) { deuda++; if (d.importe === null) sinTarifa++; else deudaImporte += d.importe; }
+    if (c.pago_diferido === 'solicitado') solicitudes++;
   }
-  if (!pend && !renovar) return '';
+  if (!pend && !renovar && !deuda && !(solicitudes && esAdmin())) return '';
   const boton = (v, txt) => `<button class="cobro-link" data-acc="filtro" data-k="pago" data-v="${v}">${txt}</button>`;
   return `<div class="cobro-strip">💶 ${[
     pend ? boton('pendiente', `<b>${pend}</b> pendiente${pend === 1 ? '' : 's'} · <b>${fmtEUR(importe)}</b> por cobrar`) : '',
     renovar ? boton('renovar', `<b>${renovar}</b> por renovar`) : '',
+    deuda ? boton('deuda', `<b>${deuda}</b> con sesiones por cobrar${deudaImporte ? ` · <b>${fmtEUR(deudaImporte)}</b>` : ''}${sinTarifa ? ` (${sinTarifa} sin tarifa)` : ''}`) : '',
+    solicitudes && esAdmin() ? boton('solicitud', `⏳ <b>${solicitudes}</b> solicitud${solicitudes === 1 ? '' : 'es'} de «paga después»`) : '',
   ].filter(Boolean).join(' · ')}</div>`;
 }
 
@@ -51,6 +65,7 @@ const CHIP_COBRO = {
 function pagoHTML(c) {
   const e = estadoCobro(c, hoyISO());
   if (!e || e.clave === 'sin_bono') return '';
+  if (esDiferido(c) && e.clave !== 'pendiente' && e.clave !== 'programado') return '';   // sus cobros ya pagados no hace falta repetirlos
   const [clase, texto] = CHIP_COBRO[e.clave];
   const detalle = e.clave === 'renovar' ? `último bono ${fmtEUR(e.importe)}`
     : `${e.clave === 'pendiente' ? 'vence' : 'pago'} ${fmtFecha(e.fecha)} · <b>${fmtEUR(e.importe)}</b>${e.n > 1 ? ` (${e.n} bonos)` : ''}`;
@@ -59,13 +74,21 @@ function pagoHTML(c) {
   return `<div class="pago-row"><span class="chip ${clase}">${texto}</span><span class="pago-txt">${detalle}</span>${boton}</div>`;
 }
 
+// «Entrena y paga después»: aprobado por el administrador, o solicitado y pendiente de aprobar.
+const chipDiferido = c => (c.pago_diferido === 'aprobado' ? '<span class="chip diferido" title="Entrena y paga después (autorizado por el administrador)">PAGA DESPUÉS</span>'
+  : c.pago_diferido === 'solicitado' ? '<span class="chip pendiente" title="Pendiente de que el administrador lo apruebe">⏳ PAGA DESPUÉS · SIN APROBAR</span>' : '');
+
 const chipsTipo = c => `
   <span class="chip ${c.estado === 'efectivo' ? 'verde' : 'amarillo'}">${c.estado === 'efectivo' ? 'CLIENTE' : 'POTENCIAL'}</span>
-  <span class="chip ${c.origen === 'codek' ? 'granate' : 'gris'}">${c.origen === 'codek' ? 'CODEK' : 'EXTERNO'}</span>`;
+  <span class="chip ${c.origen === 'codek' ? 'granate' : 'gris'}">${c.origen === 'codek' ? 'CODEK' : 'EXTERNO'}</span>${c.estado === 'efectivo' ? chipDiferido(c) : ''}`;
 
 function itemHTML(c) {
   let extra;
-  if (c.estado === 'efectivo') {
+  const dif = c.estado === 'efectivo' ? deudaDiferida(c) : null;
+  if (dif) {
+    extra = `<div class="pago-row"><span class="pago-txt">${dif.n
+      ? `debe <b>${dif.n}</b> ${dif.n === 1 ? 'sesión' : 'sesiones'}${dif.importe === null ? ' · sin tarifa' : ` · <b>${fmtEUR(dif.importe)}</b>`}` : 'al día ✓'}${dif.reservadas ? ` · ${dif.reservadas}🟡` : ''}</span></div>`;
+  } else if (c.estado === 'efectivo') {
     const cr = creditos(c);
     if (!cr.total) extra = `<div class="credit-text">Sin bono${cr.hechas ? ` · ${cr.hechas} hechas` : ''}</div>`;
     else {
@@ -80,7 +103,7 @@ function itemHTML(c) {
   return `<div class="client-item ${S.cliSel === c.id ? 'active' : ''} ${c.activo ? '' : 'archivado'}" data-acc="cli-sel" data-id="${c.id}">
     ${esAdmin() ? `<button class="item-borrar" data-acc="cli-borrar" data-id="${c.id}" title="Eliminar ficha" aria-label="Eliminar ficha">🗑</button>` : ''}
     <div class="client-name">${esc(nombreCompleto(c))}</div>
-    <div class="chips">${chipsTipo(c)}${c.estado === 'efectivo' && c.activo && creditos(c).sinBono ? `<span class="chip rojo" title="Tiene sesiones hechas que ningún bono cubre">⚠ ${creditos(c).sinBono} SIN BONO</span>` : ''}${tieneLesionActiva(c.lesiones) ? '<span class="chip lesion" title="Tiene lesiones o limitaciones registradas">🩹 LESIÓN</span>' : ''}${esAdmin() && !entrenadorFiltroId() ? `<span class="chip" style="border-color:${entrenadorDe(c.entrenador_id)?.color};color:${entrenadorDe(c.entrenador_id)?.color}">${esc(entrenadorDe(c.entrenador_id)?.nombre || '')}</span>` : ''}${c.activo ? '' : '<span class="chip gris">ARCHIVADO</span>'}${c.activo && camposPendientes(c).length ? '<span class="chip pendiente" title="Faltan datos por completar">INFO PENDIENTE</span>' : ''}</div>
+    <div class="chips">${chipsTipo(c)}${c.estado === 'efectivo' && c.activo && !dif && creditos(c).sinBono ? `<span class="chip rojo" title="Tiene sesiones hechas que ningún bono cubre">⚠ ${creditos(c).sinBono} SIN BONO</span>` : ''}${tieneLesionActiva(c.lesiones) ? '<span class="chip lesion" title="Tiene lesiones o limitaciones registradas">🩹 LESIÓN</span>' : ''}${esAdmin() && !entrenadorFiltroId() ? `<span class="chip" style="border-color:${entrenadorDe(c.entrenador_id)?.color};color:${entrenadorDe(c.entrenador_id)?.color}">${esc(entrenadorDe(c.entrenador_id)?.nombre || '')}</span>` : ''}${c.activo ? '' : '<span class="chip gris">ARCHIVADO</span>'}${c.activo && camposPendientes(c).length ? '<span class="chip pendiente" title="Faltan datos por completar">INFO PENDIENTE</span>' : ''}</div>
     ${pagoHTML(c)}
     ${extra}</div>`;
 }
@@ -94,8 +117,34 @@ function seg(k, opciones) {
     `<button class="${S.cli[k] === v ? 'on' : ''}" data-acc="filtro" data-k="${k}" data-v="${v}">${l}</button>`).join('')}</div>`;
 }
 
+// Panel «Entrena y paga después» de la ficha (solo clientes). Es una excepción: el entrenador la solicita y la aprueba
+// el administrador (la base de datos también lo impone). Estados: no → solicitado → aprobado.
+function panelDiferidoHTML(c) {
+  const admin = esAdmin(), t = c.tarifa_sesion != null && c.tarifa_sesion !== '' ? Number(c.tarifa_sesion) : null;
+  const tarifa = t === null ? 'sin tarifa' : `${fmtEUR(t)}/sesión`;
+  const quien = esc(entrenadorDe(c.entrenador_id)?.nombre || 'El entrenador');
+  let cuerpo;
+  if (c.pago_diferido === 'aprobado') {
+    cuerpo = `<span>✅ <b>Entrena y paga después</b> · autorizado por el administrador · ${esc(tarifa)}</span>
+      ${admin ? `<span class="dif-acciones"><button class="btn btn-sm btn-secondary" data-acc="dif-tarifa" data-id="${c.id}">Cambiar tarifa</button>
+        <button class="btn btn-sm btn-secondary" data-acc="dif-retirar" data-id="${c.id}">Retirar autorización</button></span>` : ''}`;
+  } else if (c.pago_diferido === 'solicitado') {
+    cuerpo = admin
+      ? `<span>⏳ <b>${quien} solicita</b> que este cliente entrene y pague después · ${esc(tarifa)}</span>
+         <span class="dif-acciones"><button class="btn btn-sm btn-cobrar" data-acc="dif-aprobar" data-id="${c.id}">✓ Aprobar</button>
+         <button class="btn btn-sm btn-secondary" data-acc="dif-rechazar" data-id="${c.id}">Rechazar</button></span>`
+      : `<span>⏳ <b>Solicitud enviada</b> · pendiente de que el administrador la apruebe. Mientras tanto se trata como un cliente normal.</span>
+         <span class="dif-acciones"><button class="btn btn-sm btn-secondary" data-acc="dif-retirar" data-id="${c.id}">Retirar solicitud</button></span>`;
+  } else {
+    cuerpo = `<label class="check"><input type="checkbox" data-acc="dif-pedir" data-id="${c.id}">
+      <span>Entrena y paga después <span class="hint">(excepcional: ${admin ? 'lo autorizas tú' : 'lo tiene que aprobar el administrador'})</span></span></label>`;
+  }
+  return `<div class="dif-panel">${cuerpo}</div>`;
+}
+
 function fichaHTML(c) {
   const efe = c.estado === 'efectivo';
+  const dif = efe ? deudaDiferida(c) : null;
   const cr = creditos(c);
   const hoy = hoyISO();
   const pagado = (c.bonos || []).reduce((t, b) => t + (Number(b.precio) || 0), 0);
@@ -118,10 +167,16 @@ function fichaHTML(c) {
   }
   if (!c.activo) alertas += '<div class="alert alert-warn">ARCHIVADO — no aparece en las listas normales.</div>';
   if (efe) {
-    if (!cr.total) alertas += '<div class="alert alert-warn">Sin bono: añade uno para poder registrar sesiones.</div>';
+    if (dif) {
+      // Entrena y paga después: no se avisa de «sin bono»; se avisa de lo que debe.
+      alertas += `<div class="alert alert-diferido alert-flex"><span>💶 <b>PAGA DESPUÉS</b> — ${dif.n
+        ? `debe <b>${dif.n}</b> ${dif.n === 1 ? 'sesión' : 'sesiones'}${dif.importe === null ? ' (falta indicar su tarifa por sesión)' : ` (${fmtEUR(dif.importe)} a ${fmtEUR(dif.tarifa)}/sesión)`}`
+        : 'no debe nada ahora mismo'}.</span>
+        ${dif.n && esAdmin() ? `<button class="btn btn-sm btn-cobrar" data-acc="cli-cobrar-sesiones" data-id="${c.id}">💶 Marcar como cobradas…</button>` : ''}</div>`;
+    } else if (!cr.total) alertas += '<div class="alert alert-warn">Sin bono: añade uno para poder registrar sesiones.</div>';
     else if (cr.restantes === 0) alertas += '<div class="alert alert-danger">⚠ BONO AGOTADO — el cliente necesita renovar.</div>';
     else if (cr.restantes <= 2) alertas += `<div class="alert alert-warn">⚡ Solo quedan ${cr.restantes} sesión${cr.restantes === 1 ? '' : 'es'} — avisa al cliente.</div>`;
-    if (cr.libres < 0) alertas += `<div class="alert alert-warn">Hay ${-cr.libres} sesión${cr.libres === -1 ? '' : 'es'} reservada${cr.libres === -1 ? '' : 's'} de más para los créditos que quedan.</div>`;
+    if (!dif && cr.libres < 0) alertas += `<div class="alert alert-warn">Hay ${-cr.libres} sesión${cr.libres === -1 ? '' : 'es'} reservada${cr.libres === -1 ? '' : 's'} de más para los créditos que quedan.</div>`;
     const cobro = estadoCobro(c, hoy);
     if (cobro?.clave === 'pendiente') {
       alertas += `<div class="alert alert-warn alert-flex"><span>💶 <b>PENDIENTE DE PAGO</b> — ${fmtEUR(cobro.importe)}${cobro.n > 1 ? ` (${cobro.n} bonos)` : ''}, con fecha de pago ${fmtFecha(cobro.fecha)}.</span>
@@ -151,18 +206,21 @@ function fichaHTML(c) {
     const bonos = [...(c.bonos || [])].sort((a, b) => b.fecha_pago.localeCompare(a.fecha_pago)).map(b => {
       const e = estadoPago(b, hoy), [clase, texto] = CHIP_BONO[e];
       const uso = consumo.porBono.get(b.id);
+      const esCobro = b.tipo === 'cobro';
       return `
       <div class="bono-row">
-        <span>${fmtFecha(b.fecha_pago)} · bono de <b>${b.sesiones}</b> sesiones · ${fmtEUR(b.precio / b.sesiones)}/ses
-          <span class="chip ${uso.usadas >= uso.total ? 'rojo' : 'gris'}" title="Sesiones hechas que se descuentan de este bono">usadas ${uso.usadas} de ${uso.total}</span>
+        <span>${fmtFecha(b.fecha_pago)} · ${esCobro ? 'cobro de' : 'bono de'} <b>${b.sesiones}</b> ${b.sesiones === 1 ? 'sesión' : 'sesiones'} · ${fmtEUR(b.precio / b.sesiones)}/ses
+          ${dif ? '' : `<span class="chip ${uso.usadas >= uso.total ? 'rojo' : 'gris'}" title="Sesiones hechas que se descuentan de este bono">usadas ${uso.usadas} de ${uso.total}</span>`}
           <span class="chip ${clase}">${texto}${e === 'pagado' ? ` ${fmtFecha(b.pagado_el).slice(0, 5)}` : ''}</span>
           ${b.metodo_pago ? `<span class="chip">${etiquetaMetodo(b.metodo_pago)}</span>` : ''}</span>
+        ${esCobro ? `<span><span style="color:var(--green-light)">${fmtEUR(b.precio)}</span>
+          ${esAdmin() ? `<button class="btn btn-sm btn-secondary" data-acc="cobro-deshacer" data-id="${b.id}" title="Las sesiones vuelven a quedar por cobrar">↩ Deshacer cobro</button>` : ''}</span>` : `
         <span><span style="color:var(--green-light)">${fmtEUR(b.precio)}</span>
           ${esAdmin() ? (e === 'pagado'
             ? `<button class="btn btn-sm btn-secondary" data-acc="bono-pagar" data-id="${b.id}" data-v="0" title="Volver a dejarlo sin confirmar">Deshacer pago</button>`
             : `<button class="btn btn-sm btn-cobrar" data-acc="bono-pagar" data-id="${b.id}" data-v="1" title="Confirmar que se ha cobrado">✓ Marcar pagado</button>`) : ''}
           <button class="sess-del" data-acc="bono-editar" data-id="${b.id}" title="Editar bono">✎</button>
-          <button class="sess-del" data-acc="bono-borrar" data-id="${b.id}" title="Eliminar bono">✕</button></span>
+          <button class="sess-del" data-acc="bono-borrar" data-id="${b.id}" title="Eliminar bono">✕</button></span>`}
       </div>`;
     }).join('') || '<span style="opacity:.4">Sin bonos</span>';
 
@@ -175,7 +233,7 @@ function fichaHTML(c) {
       return `<div class="sess-entry">
         <span class="sess-num">${numero.has(s.id) ? '#' + numero.get(s.id) : '—'}</span>
         <span class="sess-date">${fmtFechaDia(s.fecha)}</span><span class="sess-time">${s.hora}</span>
-        <span class="sess-status ${e}">${ETIQUETA[e]}</span>
+        <span class="sess-status ${e}">${ETIQUETA[e]}</span>${dif && s.cobro_bono_id ? '<span class="chip verde sess-cobrada" title="Sesión ya cobrada">COBRADA</span>' : ''}
         <div class="sess-actions">
           <button class="s-btn b" data-acc="ses-estado" data-id="${s.id}" data-v="reservada" title="Reservada">R</button>
           <button class="s-btn d" data-acc="ses-estado" data-id="${s.id}" data-v="hecha" title="Hecha">✓</button>
@@ -186,7 +244,17 @@ function fichaHTML(c) {
       </div>`;
     }).join('') || '<div class="vacio">Sin sesiones registradas</div>';
 
-    cuerpo = `
+    // Quien paga después no tiene «créditos»: lo que importa es el balance de lo que debe y lo ya cobrado.
+    const widget = dif ? `
+      <div class="credit-widget balance">
+        <div class="cw-row">
+          <div class="cw-stat"><div class="cw-num" style="color:var(--red-light)">${cr.hechas}</div><div class="cw-label">Realizadas</div></div>
+          <div class="cw-stat"><div class="cw-num" style="color:var(--green-light)">${dif.cobradas}</div><div class="cw-label">Cobradas · ${fmtEUR(dif.cobrado)}</div></div>
+          <div class="cw-stat"><div class="cw-num" style="color:${dif.n ? '#ff6b6b' : 'var(--green-light)'}">${dif.n}</div><div class="cw-label">Por cobrar · ${dif.importe === null ? 'sin tarifa' : fmtEUR(dif.importe)}</div></div>
+          <div class="cw-stat"><div class="cw-num" style="color:var(--yellow)">${dif.reservadas}</div><div class="cw-label">Reservadas</div></div>
+        </div>
+        ${dif.n ? `<div class="dif-pend"><b>Sesiones por cobrar:</b> ${dif.pendientes.map(s => fmtFechaDia(s.fecha)).join(' · ')}</div>` : ''}
+      </div>` : `
       <div class="credit-widget">
         <div class="cw-row">
           <div class="cw-stat"><div class="cw-num" style="color:var(--green-light)">${cr.restantes}</div><div class="cw-label">Quedan</div></div>
@@ -195,11 +263,13 @@ function fichaHTML(c) {
           <div class="cw-stat"><div class="cw-num" style="color:#666">${cr.noVino}</div><div class="cw-label">No vino</div></div>
         </div>
         <div class="big-bar"><div class="big-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
-      </div>
+      </div>`;
+    cuerpo = `
+      ${widget}
       <div class="section-title">Días fijos</div>
       <div class="dias-txt">${(c.dias_fijos || []).length ? esc(textoDias(c.dias_fijos)) : '<span style="opacity:.4">Sin días fijos</span>'}</div>
       <div class="section-title" style="margin-top:20px">Bonos</div>
-      <div class="bono-history">${bonos}${consumo.sinBono ? `
+      <div class="bono-history">${bonos}${!dif && consumo.sinBono ? `
         <div class="bono-row bono-sin"><span>⚠ <b>${consumo.sinBono}</b> ${consumo.sinBono === 1 ? 'sesión hecha' : 'sesiones hechas'} que ningún bono cubre</span>
           <button class="recharge-btn" data-acc="cli-bono" data-id="${c.id}">+ Nuevo bono</button></div>` : ''}</div>
       <div class="section-title" style="margin-top:20px">Historial de sesiones</div>
@@ -233,6 +303,7 @@ function fichaHTML(c) {
       </div>
       <div class="client-actions">${botones}</div>
     </div>
+    ${efe && c.activo ? panelDiferidoHTML(c) : ''}
     ${cuerpo}`;
 }
 
@@ -290,7 +361,8 @@ export function renderClientes(el) {
         ${esAdmin() ? filtroEntrenadorHTML(S.entrenadores, S.filtroEntr) : ''}
         ${seg('estado', [['todos', 'Todos'], ['potencial', 'Potenciales'], ['efectivo', 'Clientes']])}
         ${seg('origen', [['todos', 'Todos'], ['codek', 'Codek'], ['externo', 'Externos']])}
-        ${seg('pago', [['todos', 'Pago: todos'], ['pendiente', 'Pendiente'], ['programado', 'Programado'], ['pagado', 'Pagado'], ['renovar', 'Renovar']])}
+        ${seg('pago', [['todos', 'Pago: todos'], ['pendiente', 'Pendiente'], ['programado', 'Programado'], ['pagado', 'Pagado'], ['renovar', 'Renovar'],
+          ...(S.cli.pago === 'deuda' ? [['deuda', 'Por cobrar']] : []), ...(S.cli.pago === 'solicitud' ? [['solicitud', 'Solicitudes']] : [])])}
         <label class="check check-sm"><input type="checkbox" data-acc="cli-pendientes" ${S.cli.pendientes ? 'checked' : ''}> Solo con info pendiente</label>
         <label class="check check-sm"><input type="checkbox" data-acc="cli-archivados" ${S.cli.archivados ? 'checked' : ''}> Ver archivados</label>
         ${revisarBotonHTML()}
@@ -310,6 +382,15 @@ export function alBuscar(valor) {
   if (cobros) cobros.innerHTML = cobrosHTML();
 }
 
+// Vuelve un cliente a «pago normal» tras confirmar (rechazar una solicitud, retirarla o retirar una autorización).
+async function cambiarPagoDiferido(c, titulo, ok, aviso, mensaje) {
+  const si = await dialogo({ titulo, mensaje: `<p>${mensaje(esc(nombreCompleto(c)))}</p>`, ok });
+  if (!si) return;
+  await S.api.guardarCliente({ id: c.id, pago_diferido: 'no' });
+  await bus.recargar();
+  toast(aviso);
+}
+
 // Confirma el cobro (solo el administrador; la base de datos también lo impide a los demás).
 async function marcarPagados(bonos, mensaje) {
   const ok = await dialogo({ titulo: 'Marcar como pagado', mensaje, ok: 'Sí, está pagado' });
@@ -324,6 +405,29 @@ export const accionesClientes = {
   'cli-sel': t => { S.cliSel = t.dataset.id; bus.repintar(); },
   'cli-volver': () => { S.cliSel = null; bus.repintar(); },
   'cli-revisar': () => modalRevision(),
+  // «Entrena y paga después»: el entrenador lo solicita, el administrador lo aprueba o lo rechaza.
+  'dif-pedir': t => { t.checked = false; modalTarifaDiferido(clienteDe(t.dataset.id), 'pedir'); },
+  'dif-aprobar': t => modalTarifaDiferido(clienteDe(t.dataset.id), 'aprobar'),
+  'dif-tarifa': t => modalTarifaDiferido(clienteDe(t.dataset.id), 'tarifa'),
+  'dif-rechazar': t => cambiarPagoDiferido(clienteDe(t.dataset.id), 'Rechazar solicitud', 'Rechazar', 'Solicitud rechazada', nombre => `¿Rechazar que <b>${nombre}</b> entrene y pague después? Seguirá como un cliente normal.`),
+  'dif-retirar': t => {
+    const c = clienteDe(t.dataset.id);
+    return c.pago_diferido === 'aprobado'
+      ? cambiarPagoDiferido(c, 'Retirar autorización', 'Retirar', 'Autorización retirada', nombre => `¿Retirar la autorización de <b>${nombre}</b>? Volverá a tratarse como un cliente normal (lo que deba aparecerá como «sesiones sin bono» hasta que se registre un bono).`)
+      : cambiarPagoDiferido(c, 'Retirar solicitud', 'Retirar', 'Solicitud retirada', nombre => `¿Retirar la solicitud para <b>${nombre}</b>?`);
+  },
+  'cli-cobrar-sesiones': t => modalCobrarSesiones(clienteDe(t.dataset.id)),
+  'cobro-deshacer': async t => {
+    const c = clienteDe(S.cliSel), b = c?.bonos.find(x => x.id === t.dataset.id);
+    if (!esAdmin() || !b) return;
+    const n = (c.sesiones || []).filter(s => s.cobro_bono_id === b.id).length;
+    const ok = await dialogo({ titulo: 'Deshacer cobro', ok: 'Deshacer cobro', peligro: true,
+      mensaje: `<p>Se anulará el cobro de <b>${fmtEUR(b.precio)}</b> y ${n === 1 ? 'su sesión' : `sus ${n} sesiones`} ${n === 1 ? 'volverá' : 'volverán'} a quedar <b>por cobrar</b>. ¿Seguro?</p>` });
+    if (!ok) return;
+    await S.api.eliminarBono(b.id);
+    await bus.recargar();
+    toast('Cobro deshecho');
+  },
   'filtro': t => { S.cli[t.dataset.k] = t.dataset.v; bus.repintar(); },
   'cli-archivados': t => { S.cli.archivados = t.checked; bus.repintar(); },
   'cli-pendientes': t => { S.cli.pendientes = t.checked; bus.repintar(); },
