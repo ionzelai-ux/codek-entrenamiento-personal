@@ -282,6 +282,27 @@ export async function cambiarEstadoSesion(sesion, nuevo) {
 }
 
 // ── Ficha de cliente (alta / edición) ─────────────────────────────────────
+// Bloque «Entrena y paga después» de los formularios de alta y de conversión: casilla + precio acordado por sesión.
+// Si se marca, no se pide bono: las sesiones se irán acumulando como deuda. Quien lo marca lo SOLICITA (el
+// administrador lo aprueba); si lo marca el administrador queda autorizado directamente.
+const bloqueDiferidoHTML = () => `<div class="dif-alta">
+  <label class="check"><input type="checkbox" name="paga_despues"> <span>Entrena y paga después
+    <span class="hint">(excepcional: ${esAdmin() ? 'lo autorizas tú' : 'lo tiene que aprobar el administrador'}; no lleva bono, sus sesiones se acumulan como deuda)</span></span></label>
+  <div class="form-group" data-dif-tarifa hidden style="margin:8px 0 0"><label class="form-label">Precio acordado por sesión (€) *</label>
+    <input class="form-input" name="tarifa_sesion" type="text" inputmode="decimal" autocomplete="off" placeholder="p. ej. 35">
+    <div class="hint">Lo que se ha acordado cobrarle por cada sesión; con él se calcula lo que debe.</div></div></div>`;
+function bindDiferido(root, alCambiar) {
+  const chk = root.querySelector('[name=paga_despues]'), campos = root.querySelector('[data-dif-tarifa]');
+  chk.addEventListener('change', () => { campos.hidden = !chk.checked; alCambiar?.(chk.checked); });
+}
+// null si no se ha marcado; si se ha marcado exige el precio y devuelve { tarifa, pago_diferido }.
+function leerDiferido(root, val) {
+  if (!root.querySelector('[name=paga_despues]')?.checked) return null;
+  const t = aTarifa(root.querySelector('[name=tarifa_sesion]').value);
+  val.exige(t !== null && !Number.isNaN(t) && t > 0, 'tarifa_sesion', 'precio acordado por sesión');
+  return { tarifa: t, pago_diferido: esAdmin() ? 'aprobado' : 'solicitado' };
+}
+
 export function modalCliente(cliente = null) {
   const edit = !!cliente;
   const c = cliente || {};
@@ -334,7 +355,8 @@ export function modalCliente(cliente = null) {
       </div>
 
       ${edit ? '' : `<div data-bloque="efectivo-nuevo" hidden>
-        <div class="section-mini">Bono contratado</div>${camposBono()}</div>`}
+        <div class="section-mini">Pago</div>${bloqueDiferidoHTML()}
+        <div data-bloque="bono"><div class="section-mini">Bono contratado</div>${camposBono()}</div></div>`}
       <div data-bloque="efectivo" hidden>
         <div class="section-mini">Días fijos</div>
         ${bloqueDias(c.dias_fijos || [], { conGenerar: !edit })}
@@ -358,7 +380,10 @@ export function modalCliente(cliente = null) {
   bindSeg(m.el, pintarBloques);
   bindCerrar(m);
   bindBloqueDias(m.el);
-  if (!edit) bindBono(m.el);
+  if (!edit) {
+    bindBono(m.el);
+    bindDiferido(m.el, pagaDespues => { q('[data-bloque=bono]').hidden = pagaDespues; });   // sin bono si paga después
+  }
   pintarBloques();
 
   // El importe de un potencial NUNCA se rellena solo: hay que escribirlo (o pulsar «usar»
@@ -398,13 +423,15 @@ export function modalCliente(cliente = null) {
       val.exige(num('pot_precio') > 0, 'pot_precio', 'importe que pagaría');
     }
     const dias = estado === 'efectivo' ? leerBloqueDias(m.el, val) : [];
-    const bono = !edit && estado === 'efectivo' ? leerBono(m.el, val) : null;
+    const dif = !edit && estado === 'efectivo' ? leerDiferido(m.el, val) : null;      // paga después: sin bono, con precio acordado
+    const bono = !edit && estado === 'efectivo' && !dif ? leerBono(m.el, val) : null;
     val.cierra();
 
     const datos = {
       nombre: v('nombre'), apellidos: v('apellidos'), telefono: v('telefono') || null, email: v('email') || null,
       fecha_nacimiento: v('fecha_nacimiento') || null, origen, notas: v('notas') || null, lesiones: v('lesiones') || null,
     };
+    if (dif) Object.assign(datos, { pago_diferido: dif.pago_diferido, tarifa_sesion: dif.tarifa });
     if (!edit || admin) datos.entrenador_id = entrenador_id;
     if (estado === 'potencial') {
       Object.assign(datos, { pot_sesiones_bono: num('pot_sesiones_bono'), pot_veces_semana: num('pot_veces_semana'), pot_precio: num('pot_precio') });
@@ -423,8 +450,9 @@ export function modalCliente(cliente = null) {
     S.cliSel = guardado.id;
     m.cerrar();
     await bus.recargar();
-    toast(edit ? 'Ficha actualizada' : 'Ficha creada');
+    toast(edit ? 'Ficha actualizada' : dif && dif.pago_diferido === 'solicitado' ? 'Ficha creada · solicitud de «paga después» enviada al administrador' : 'Ficha creada');
     if (generar && bonoCreado) modalGenerar(clienteDe(guardado.id), { bono: bonoCreado, cantidad: bonoCreado.sesiones });
+    else if (generar && dif) modalGenerar(clienteDe(guardado.id));                    // paga después: no hay bono del que sacar la cantidad
   });
 }
 
@@ -434,25 +462,28 @@ export function modalConvertir(c) {
     <div class="modal-title">Convertir en cliente</div>
     <p class="sub">${esc(nombreCompleto(c))} pasa de potencial a cliente. Indica el bono que ha contratado.</p>
     <form novalidate>
-      ${camposBono({ sesiones: c.pot_sesiones_bono || '', precio: c.pot_precio ?? '' })}
+      ${bloqueDiferidoHTML()}
+      <div data-bloque="bono">${camposBono({ sesiones: c.pot_sesiones_bono || '', precio: c.pot_precio ?? '' })}</div>
       <div class="section-mini">Días fijos</div>
       ${bloqueDias(c.dias_fijos || [], { conGenerar: true })}
       ${acciones('Convertir')}
     </form>`, 'modal-lg');
   const form = m.el.querySelector('form');
   bindCerrar(m); bindSeg(m.el); bindBono(m.el); bindBloqueDias(m.el);
+  bindDiferido(m.el, pagaDespues => { m.el.querySelector('[data-bloque=bono]').hidden = pagaDespues; });
   alEnviar(m, form, async () => {
     const val = nuevoValidador(m.el);
-    const bono = leerBono(m.el, val);
+    const dif = leerDiferido(m.el, val);
+    const bono = dif ? null : leerBono(m.el, val);
     const dias = leerBloqueDias(m.el, val);
     val.cierra();
     const generar = dias.length > 0 && m.el.querySelector('[name=generar]').checked;
-    await S.api.guardarCliente({ id: c.id, estado: 'efectivo', dias_fijos: dias });
-    const creado = await S.api.crearBono({ cliente_id: c.id, ...bono });
+    await S.api.guardarCliente({ id: c.id, estado: 'efectivo', dias_fijos: dias, ...(dif ? { pago_diferido: dif.pago_diferido, tarifa_sesion: dif.tarifa } : {}) });
+    const creado = bono ? await S.api.crearBono({ cliente_id: c.id, ...bono }) : null;
     m.cerrar();
     await bus.recargar();
-    toast('Convertido en cliente');
-    if (generar) modalGenerar(clienteDe(c.id), { bono: creado, cantidad: creado.sesiones });
+    toast(dif && dif.pago_diferido === 'solicitado' ? 'Convertido en cliente · solicitud de «paga después» enviada al administrador' : 'Convertido en cliente');
+    if (generar) modalGenerar(clienteDe(c.id), creado ? { bono: creado, cantidad: creado.sesiones } : {});
   });
 }
 

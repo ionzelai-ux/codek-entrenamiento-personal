@@ -131,7 +131,9 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   elige **qué sesiones** le han abonado (han venido 5 y han pagado 2: marca esas 2), el importe, la fecha y el método: se
   crea un bono de tipo `cobro` ya pagado y esas sesiones quedan enlazadas a él (`sesiones.cobro_bono_id`), así que el
   cobro entra solo en «Cobrado» del Resumen y en Comisiones. «↩ Deshacer cobro» las devuelve a «por cobrar». Quien paga
-  después nunca pasa a «Renovar» ni necesita bono para no figurar con «info pendiente».
+  después nunca pasa a «Renovar» ni necesita bono para no figurar con «info pendiente». Al **crear** un cliente (o convertir un potencial)
+  se puede marcar «Entrena y paga después» y fijar el **precio acordado por sesión** (obligatorio): entonces no se pide bono; si lo
+  marca un entrenador queda solicitado, si lo marca el administrador queda autorizado directamente.
 - **Renovar**: si el último bono de un cliente está pagado y le quedan 2 sesiones o menos (o se agotó) sin que haya
   un bono nuevo, se marca «RENOVAR» con el importe del último bono como referencia.
 - **Resumen → Facturación prevista**: la fecha de pago de cada bono decide en qué mes cuenta; muestra el total de

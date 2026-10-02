@@ -324,6 +324,7 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
 .dif-panel b { color: var(--text); }
 .dif-acciones { display: flex; gap: 8px; flex-wrap: wrap; }
 .credit-widget.balance { border-color: var(--violeta); }
+.dif-alta { border: 1px dashed var(--violeta); padding: 10px 14px; margin-bottom: 14px; background: rgba(155,123,214,.06); }
 .dif-pend { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); font-family: var(--mono); font-size: 11px; color: var(--muted); line-height: 1.7; }
 .dif-pend b { color: var(--text); }
 .sess-cobrada { margin-left: 4px; }
