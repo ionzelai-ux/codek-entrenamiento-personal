@@ -7,6 +7,7 @@ import {
   estadoCobro, facturacionMes,
   comisionBono, esDeclaradoPorDefecto, bonosLiquidablesMes, liquidacionMes, totalesComisiones, agruparComisionesPorEntrenador,
   entrenadoresConComision, DEFAULT_CONFIG_COMISIONES, tieneLesionActiva, comisionManual, lineasManualesMes,
+  consumoPorBono, precioSesionEstimado, incidenciasCliente, solapesEntrenadores, revisionDatos,
   sesionesCambiables, horaNueva, planCambioHorario, diasFijosActualizados, etiquetaMes,
 } from '../js/logica.js';
 
@@ -69,7 +70,7 @@ test('créditos: hechas y auto consumen; reservadas y no_vino no', () => {
     ],
   };
   const r = creditos(c, ahora);
-  assert.deepEqual(r, { total: 12, hechas: 2, reservadas: 1, noVino: 1, restantes: 10, libres: 9 });
+  assert.deepEqual(r, { total: 12, hechas: 2, reservadas: 1, noVino: 1, restantes: 10, libres: 9, sinBono: 0 });
 });
 
 test('créditos: nunca negativos y libres puede indicar sobrereserva', () => {
@@ -260,6 +261,107 @@ test('etiqueta de mes: este, siguiente, pasado (también cruzando de año) o nad
   assert.equal(etiquetaMes('2026-08', '2026-10-02'), '');
   assert.equal(etiquetaMes('2027-01', '2026-12-31'), 'MES SIGUIENTE');
   assert.equal(etiquetaMes('2026-12', '2027-01-05'), 'MES PASADO');
+});
+
+// ── Revisión de datos: que las cifras se puedan creer ─────────────────────────
+const AHORA_REV = new Date(2026, 9, 2, 12, 0);   // 2 oct 2026
+const sx = (id, fecha, hora, estado = 'hecha', extra = {}) => ({ id, fecha, hora, estado, duracion_min: 60, ...extra });
+
+// Patricia Remón tal como está en producción: un bono de 3 sesiones (105 €) y 5 hechas + 1 no vino + 1 reservada
+const patricia = () => ({
+  id: 'pat', nombre: 'Patricia', apellidos: 'Remón', estado: 'efectivo', activo: true, entrenador_id: 'edu',
+  bonos: [{ id: 'b1', sesiones: 3, precio: 105, fecha_pago: '2026-09-15', fecha_inicio: '2026-09-15', metodo_pago: 'efectivo' }],
+  sesiones: [
+    sx('1', '2026-09-14', '10:30'), sx('2', '2026-09-17', '11:15'), sx('3', '2026-09-18', '10:30'), sx('4', '2026-09-21', '11:00'),
+    sx('x', '2026-09-25', '10:30', 'no_vino'), sx('5', '2026-09-30', '10:00'), sx('6', '2026-10-05', '11:00', 'reservada'),
+  ],
+});
+
+test('créditos: 5 hechas con un bono de 3 → quedan 0 pero 2 están sin bono (antes esto quedaba escondido)', () => {
+  const cr = creditos(patricia(), AHORA_REV);
+  assert.deepEqual([cr.total, cr.hechas, cr.reservadas, cr.noVino, cr.restantes, cr.libres, cr.sinBono], [3, 5, 1, 1, 0, -1, 2]);
+  const bien = creditos({ bonos: [{ sesiones: 8 }], sesiones: [sx('a', '2026-09-14', '10:00'), sx('b', '2026-09-15', '10:00')] }, AHORA_REV);
+  assert.equal(bien.sinBono, 0);
+  assert.equal(bien.restantes, 6);
+});
+
+test('consumo por bono: las hechas se reparten por orden entre los bonos y lo que sobra queda sin bono', () => {
+  const c = { ...patricia(), bonos: [
+    { id: 'nuevo', sesiones: 8, precio: 280, fecha_pago: '2026-10-01', fecha_inicio: '2026-10-01' },
+    { id: 'b1', sesiones: 3, precio: 105, fecha_pago: '2026-09-15', fecha_inicio: '2026-09-15' }] };
+  const { porBono, sinBono } = consumoPorBono(c, AHORA_REV);
+  assert.deepEqual(porBono.get('b1'), { usadas: 3, total: 3 }, 'el antiguo se gasta primero');
+  assert.deepEqual(porBono.get('nuevo'), { usadas: 2, total: 8 });
+  assert.equal(sinBono, 0);
+  assert.equal(consumoPorBono(patricia(), AHORA_REV).sinBono, 2);
+  assert.equal(consumoPorBono({}, AHORA_REV).sinBono, 0);
+});
+
+test('precio por sesión estimado: el del último bono, o nada si no hay bonos', () => {
+  assert.equal(precioSesionEstimado(patricia()), 35);
+  assert.equal(precioSesionEstimado({ bonos: [{ sesiones: 8, precio: 336, fecha_pago: '2026-01-01' }, { sesiones: 4, precio: 180, fecha_pago: '2026-05-01' }] }), 45);
+  assert.equal(precioSesionEstimado({ bonos: [] }), null);
+});
+
+test('revisión: Patricia → sesiones sin bono (≈ 70 €) y una reservada sin crédito', () => {
+  const inc = incidenciasCliente(patricia(), AHORA_REV);
+  const sinBono = inc.find(i => i.clave === 'sesiones_sin_bono');
+  assert.equal(sinBono.nivel, 'alta');
+  assert.match(sinBono.texto, /5 sesiones.*suman 3.*2 sesiones sin bono.*70,00/);
+  const reservada = inc.find(i => i.clave === 'reservadas_de_mas');
+  assert.equal(reservada.nivel, 'media');
+  assert.match(reservada.texto, /1 sesión reservada sin crédito.*agotado/);
+  assert.equal(inc[0].nivel, 'alta', 'lo más grave primero');
+});
+
+test('revisión: un cliente sin bono pero con sesiones (como Natalí), un potencial con sesiones y un cliente sin nada', () => {
+  const natali = { id: 'n', nombre: 'Natalí', estado: 'efectivo', bonos: [], sesiones: ['07', '08', '11', '17', '18'].map(d => sx('n' + d, `2026-09-${d}`, '10:00', 'hecha', { nota: 'Hora no registrada' })) };
+  const i = incidenciasCliente(natali, AHORA_REV);
+  assert.equal(i[0].clave, 'sesiones_sin_bono');
+  assert.equal(i[0].nivel, 'alta');
+  assert.match(i[0].texto, /5 sesiones.*ningún bono/);
+  assert.ok(i.some(x => x.clave === 'hora_aproximada' && x.nivel === 'info'));
+  assert.equal(incidenciasCliente({ id: 'p', estado: 'potencial', bonos: [], sesiones: [sx('a', '2026-10-09', '10:00', 'reservada')] }, AHORA_REV)[0].clave, 'potencial_con_datos');
+  assert.equal(incidenciasCliente({ id: 'p', estado: 'potencial', bonos: [], sesiones: [] }, AHORA_REV).length, 0);
+  assert.equal(incidenciasCliente({ id: 'v', estado: 'efectivo', bonos: [], sesiones: [] }, AHORA_REV)[0].clave, 'sin_bono');
+});
+
+test('revisión: un cliente en orden no genera ninguna incidencia', () => {
+  const ok = { id: 'ok', nombre: 'Ok', estado: 'efectivo', activo: true, entrenador_id: 'edu',
+    bonos: [{ id: 'b', sesiones: 8, precio: 336, fecha_pago: '2026-09-01', fecha_inicio: '2026-09-01', metodo_pago: 'tarjeta' }],
+    sesiones: [sx('a', '2026-09-14', '10:00'), sx('b', '2026-09-21', '10:00'), sx('c', '2026-10-05', '10:00', 'reservada')] };
+  assert.deepEqual(incidenciasCliente(ok, AHORA_REV), []);
+});
+
+test('revisión: reservas pasadas sin confirmar, sesiones repetidas y bonos sin método de pago', () => {
+  const c = { id: 'c', estado: 'efectivo', bonos: [{ id: 'b', sesiones: 8, precio: 336, fecha_pago: '2026-09-01' }], sesiones: [
+    sx('a', '2026-09-28', '10:00', 'reservada'),                         // pasó y nadie la confirmó → cuenta como hecha
+    sx('b', '2026-10-05', '10:00', 'reservada'), sx('c', '2026-10-05', '10:00', 'reservada'),   // repetida
+  ] };
+  const claves = incidenciasCliente(c, AHORA_REV).map(i => i.clave);
+  assert.deepEqual(claves.sort(), ['bono_sin_metodo', 'duplicadas', 'sin_confirmar'].sort());
+});
+
+test('revisión de todos: solapes del mismo entrenador (ignorando horas sin registrar y «no vino») y orden por gravedad', () => {
+  const mk = (id, ent, sesiones, extra = {}) => ({ id, nombre: id, apellidos: '', estado: 'efectivo', activo: true, entrenador_id: ent,
+    bonos: [{ id: 'b' + id, sesiones: 20, precio: 800, fecha_pago: '2026-09-01', metodo_pago: 'efectivo' }], sesiones, ...extra });
+  const a = mk('A', 'edu', [sx('a1', '2026-10-06', '10:00', 'reservada')]);
+  const b = mk('B', 'edu', [sx('b1', '2026-10-06', '10:30', 'reservada')]);                 // choca con A
+  const c = mk('C', 'edu', [sx('c1', '2026-10-06', '10:00', 'no_vino')]);                  // no vino: no cuenta
+  const d = mk('D', 'edu', [sx('d1', '2026-10-06', '10:00', 'hecha', { nota: 'Hora no registrada' })]);   // hora inventada: no cuenta
+  const e = mk('E', 'jes', [sx('e1', '2026-10-06', '10:15', 'reservada')]);                 // otro entrenador: no choca
+  const sol = solapesEntrenadores([a, b, c, d, e]);
+  assert.deepEqual(sol.map(p => [p.a.cliente.id, p.b.cliente.id]), [['A', 'B']]);
+  const rev = revisionDatos([a, b, c, d, e, { ...mk('F', 'edu', []), activo: false }], AHORA_REV);
+  const claves = Object.fromEntries(rev.map(r => [r.cliente.id, r.incidencias.map(i => i.clave)]));
+  assert.deepEqual(claves.A, ['solape']);
+  assert.deepEqual(claves.B, ['solape']);
+  assert.deepEqual(claves.D, ['hora_aproximada']);
+  assert.ok(!('C' in claves) && !('E' in claves) && !('F' in claves), 'los demás no aparecen (F está archivado)');
+  assert.match(rev.find(r => r.cliente.id === 'A').incidencias[0].texto, /Coincide con B el 06\/10\/2026 a las 10:30/);
+  // la gravedad ordena: una alta va antes que una media
+  const grave = { ...mk('G', 'edu', []), bonos: [], sesiones: [sx('g1', '2026-09-14', '10:00')] };
+  assert.equal(revisionDatos([a, b, grave], AHORA_REV)[0].cliente.id, 'G');
 });
 
 // ── Comisiones de los entrenadores ──────────────────────────────────────────

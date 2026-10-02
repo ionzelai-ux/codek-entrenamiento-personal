@@ -315,6 +315,18 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
 .tabla-com .check { white-space: nowrap; }
 .com-incluir { text-align: center; }
 .com-incluir input { accent-color: var(--red); width: 16px; height: 16px; cursor: pointer; }
+/* Revisión de datos */
+.rev-n { font-weight: 700; }
+.rev-n.rev-alta { color: #ff6b6b; } .rev-n.rev-media { color: var(--yellow); } .rev-n.rev-ok { color: var(--green-light); }
+.rev-lista { max-height: 55vh; overflow-y: auto; border: 1px solid var(--border); background: var(--panel); }
+.rev-cli { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.rev-nombre { background: none; border: none; padding: 0; color: var(--text); font-family: var(--display); font-size: 18px; letter-spacing: 2px; cursor: pointer; text-align: left; }
+.rev-nombre:hover { color: var(--red-light); }
+.rev-inc { list-style: none; margin: 6px 0 0; font-size: 13px; }
+.rev-inc li { padding: 3px 0 3px 8px; border-left: 3px solid var(--border); margin-bottom: 3px; }
+.rev-inc li.rev-alta { border-color: #ff6b6b; } .rev-inc li.rev-media { border-color: var(--yellow); } .rev-inc li.rev-info { border-color: var(--blue-light); color: var(--muted); }
+.bono-sin { color: #ff6b6b; border-bottom-color: #ff6b6b; }
+.cw-aviso { color: #ff6b6b; font-weight: 700; }
 .com-man-titulo { margin-top: 20px; }
 .tabla-man .man-in { width: 84px; padding: 6px 8px; font-family: var(--mono); font-size: 13px; text-align: right; }
 .tabla-man .man-concepto { width: 100%; min-width: 190px; text-align: left; font-family: inherit; }

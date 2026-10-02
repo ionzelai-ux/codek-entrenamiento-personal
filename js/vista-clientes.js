@@ -1,7 +1,10 @@
 // Clientes: lista con filtros + ficha (datos, bonos, días fijos, créditos y sesiones).
 import { S, bus, esAdmin, entrenadorDe, nombreCompleto, clienteDe, entrenadorFiltroId } from './store.js';
-import { esc, dialogo, toast, fmtEUR, fmtFecha, fmtFechaDia, textoDias, etiquetaMetodo, filtroEntrenadorHTML } from './util.js';
-import { hoyISO, creditos, estadoEfectivo, estadoPago, estadoCobro, edad, camposPendientes, tieneLesionActiva } from './logica.js';
+import { esc, abrirModal, dialogo, toast, fmtEUR, fmtFecha, fmtFechaDia, textoDias, etiquetaMetodo, filtroEntrenadorHTML } from './util.js';
+import {
+  hoyISO, creditos, consumoPorBono, estadoEfectivo, estadoPago, estadoCobro, edad, camposPendientes, tieneLesionActiva,
+  incidenciasCliente, revisionDatos,
+} from './logica.js';
 import { modalCliente, modalConvertir, modalBono, modalEditarBono, modalGenerar, modalCambiarHorario, modalSesion, cambiarEstadoSesion } from './modales.js';
 
 const ETIQUETA = { reservada: 'RESERV.', hecha: 'HECHA', no_vino: 'NO VINO', auto: 'AUTO' };
@@ -64,12 +67,12 @@ function itemHTML(c) {
   let extra;
   if (c.estado === 'efectivo') {
     const cr = creditos(c);
-    if (!cr.total) extra = '<div class="credit-text">Sin bono</div>';
+    if (!cr.total) extra = `<div class="credit-text">Sin bono${cr.hechas ? ` · ${cr.hechas} hechas` : ''}</div>`;
     else {
       const pct = (cr.restantes / cr.total) * 100;
       const color = cr.restantes === 0 ? 'var(--red)' : pct <= 25 ? 'var(--yellow)' : 'var(--green-light)';
       extra = `<div class="credit-row"><div class="credit-bar"><div class="credit-fill" style="width:${pct}%;background:${color}"></div></div>
-        <span class="credit-text">quedan ${cr.restantes}${cr.reservadas ? ` · ${cr.reservadas}🟡` : ''}</span></div>`;
+        <span class="credit-text">${cr.sinBono ? `hechas ${cr.hechas} · bonos ${cr.total}` : `quedan ${cr.restantes}`}${cr.reservadas ? ` · ${cr.reservadas}🟡` : ''}</span></div>`;
     }
   } else {
     extra = `<div class="credit-text">${c.pot_precio ? '≈ ' + fmtEUR(c.pot_precio) : 'Sin estimación'}${c.pot_sesiones_bono ? ` · ${c.pot_sesiones_bono} ses/mes` : ''}</div>`;
@@ -77,7 +80,7 @@ function itemHTML(c) {
   return `<div class="client-item ${S.cliSel === c.id ? 'active' : ''} ${c.activo ? '' : 'archivado'}" data-acc="cli-sel" data-id="${c.id}">
     ${esAdmin() ? `<button class="item-borrar" data-acc="cli-borrar" data-id="${c.id}" title="Eliminar ficha" aria-label="Eliminar ficha">🗑</button>` : ''}
     <div class="client-name">${esc(nombreCompleto(c))}</div>
-    <div class="chips">${chipsTipo(c)}${tieneLesionActiva(c.lesiones) ? '<span class="chip lesion" title="Tiene lesiones o limitaciones registradas">🩹 LESIÓN</span>' : ''}${esAdmin() && !entrenadorFiltroId() ? `<span class="chip" style="border-color:${entrenadorDe(c.entrenador_id)?.color};color:${entrenadorDe(c.entrenador_id)?.color}">${esc(entrenadorDe(c.entrenador_id)?.nombre || '')}</span>` : ''}${c.activo ? '' : '<span class="chip gris">ARCHIVADO</span>'}${c.activo && camposPendientes(c).length ? '<span class="chip pendiente" title="Faltan datos por completar">INFO PENDIENTE</span>' : ''}</div>
+    <div class="chips">${chipsTipo(c)}${c.estado === 'efectivo' && c.activo && creditos(c).sinBono ? `<span class="chip rojo" title="Tiene sesiones hechas que ningún bono cubre">⚠ ${creditos(c).sinBono} SIN BONO</span>` : ''}${tieneLesionActiva(c.lesiones) ? '<span class="chip lesion" title="Tiene lesiones o limitaciones registradas">🩹 LESIÓN</span>' : ''}${esAdmin() && !entrenadorFiltroId() ? `<span class="chip" style="border-color:${entrenadorDe(c.entrenador_id)?.color};color:${entrenadorDe(c.entrenador_id)?.color}">${esc(entrenadorDe(c.entrenador_id)?.nombre || '')}</span>` : ''}${c.activo ? '' : '<span class="chip gris">ARCHIVADO</span>'}${c.activo && camposPendientes(c).length ? '<span class="chip pendiente" title="Faltan datos por completar">INFO PENDIENTE</span>' : ''}</div>
     ${pagoHTML(c)}
     ${extra}</div>`;
 }
@@ -99,6 +102,11 @@ function fichaHTML(c) {
   const ed = edad(c.fecha_nacimiento);
 
   let alertas = '';
+  const sinBono = efe ? incidenciasCliente(c).find(i => i.clave === 'sesiones_sin_bono') : null;
+  if (sinBono) {
+    alertas += `<div class="alert alert-danger alert-flex"><span>⚠ <b>SESIONES SIN BONO</b> — ${esc(sinBono.texto)}</span>
+      <button class="btn btn-sm btn-secondary" data-acc="cli-bono" data-id="${c.id}">+ Nuevo bono</button></div>`;
+  }
   if (String(c.lesiones || '').trim()) {
     alertas += `<div class="alert alert-lesion"><span>🩹 <b>LESIONES / LIMITACIONES</b> — ${esc(c.lesiones)}</span>
       <button class="btn btn-sm btn-secondary" data-acc="cli-editar" data-id="${c.id}">Editar</button></div>`;
@@ -139,11 +147,14 @@ function fichaHTML(c) {
     const pct = cr.total > 0 ? Math.min(100, (cr.hechas / cr.total) * 100) : 0;
     const barColor = cr.restantes === 0 ? 'var(--red)' : cr.restantes <= 2 ? 'var(--yellow)' : 'var(--green-light)';
     const CHIP_BONO = { pagado: ['verde', 'PAGADO'], pendiente: ['pendiente', 'PENDIENTE DE PAGO'], programado: ['amarillo', 'PAGO PROGRAMADO'] };
+    const consumo = consumoPorBono(c);
     const bonos = [...(c.bonos || [])].sort((a, b) => b.fecha_pago.localeCompare(a.fecha_pago)).map(b => {
       const e = estadoPago(b, hoy), [clase, texto] = CHIP_BONO[e];
+      const uso = consumo.porBono.get(b.id);
       return `
       <div class="bono-row">
-        <span>${fmtFecha(b.fecha_pago)} · <b>${b.sesiones}</b> sesiones · ${fmtEUR(b.precio / b.sesiones)}/ses
+        <span>${fmtFecha(b.fecha_pago)} · bono de <b>${b.sesiones}</b> sesiones · ${fmtEUR(b.precio / b.sesiones)}/ses
+          <span class="chip ${uso.usadas >= uso.total ? 'rojo' : 'gris'}" title="Sesiones hechas que se descuentan de este bono">usadas ${uso.usadas} de ${uso.total}</span>
           <span class="chip ${clase}">${texto}${e === 'pagado' ? ` ${fmtFecha(b.pagado_el).slice(0, 5)}` : ''}</span>
           ${b.metodo_pago ? `<span class="chip">${etiquetaMetodo(b.metodo_pago)}</span>` : ''}</span>
         <span><span style="color:var(--green-light)">${fmtEUR(b.precio)}</span>
@@ -180,7 +191,7 @@ function fichaHTML(c) {
         <div class="cw-row">
           <div class="cw-stat"><div class="cw-num" style="color:var(--green-light)">${cr.restantes}</div><div class="cw-label">Quedan</div></div>
           <div class="cw-stat"><div class="cw-num" style="color:var(--yellow)">${cr.reservadas}</div><div class="cw-label">Reservadas</div></div>
-          <div class="cw-stat"><div class="cw-num" style="color:var(--red-light)">${cr.hechas}</div><div class="cw-label">Realizadas</div></div>
+          <div class="cw-stat"><div class="cw-num" style="color:var(--red-light)">${cr.hechas}</div><div class="cw-label">Realizadas${cr.sinBono ? ` · <span class="cw-aviso">${cr.sinBono} sin bono</span>` : ''}</div></div>
           <div class="cw-stat"><div class="cw-num" style="color:#666">${cr.noVino}</div><div class="cw-label">No vino</div></div>
         </div>
         <div class="big-bar"><div class="big-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
@@ -188,7 +199,9 @@ function fichaHTML(c) {
       <div class="section-title">Días fijos</div>
       <div class="dias-txt">${(c.dias_fijos || []).length ? esc(textoDias(c.dias_fijos)) : '<span style="opacity:.4">Sin días fijos</span>'}</div>
       <div class="section-title" style="margin-top:20px">Bonos</div>
-      <div class="bono-history">${bonos}</div>
+      <div class="bono-history">${bonos}${consumo.sinBono ? `
+        <div class="bono-row bono-sin"><span>⚠ <b>${consumo.sinBono}</b> ${consumo.sinBono === 1 ? 'sesión hecha' : 'sesiones hechas'} que ningún bono cubre</span>
+          <button class="recharge-btn" data-acc="cli-bono" data-id="${c.id}">+ Nuevo bono</button></div>` : ''}</div>
       <div class="section-title" style="margin-top:20px">Historial de sesiones</div>
       <div class="sess-list">${filas}</div>`;
   } else {
@@ -223,6 +236,48 @@ function fichaHTML(c) {
     ${cuerpo}`;
 }
 
+// ── Revisión de datos ─────────────────────────────────────────────────────
+// Clientes que se revisan: los activos que se están viendo (respeta el filtro de entrenador).
+const clientesARevisar = () => { const f = entrenadorFiltroId(); return S.clientes.filter(c => c.activo && (!f || c.entrenador_id === f)); };
+const cuentaNivel = (rev, nivel) => rev.reduce((t, r) => t + r.incidencias.filter(i => i.nivel === nivel).length, 0);
+
+function revisarBotonHTML() {
+  const rev = revisionDatos(clientesARevisar());
+  const graves = rev.filter(r => r.incidencias.some(i => i.nivel === 'alta')).length;
+  const aRevisar = rev.filter(r => r.incidencias.some(i => i.nivel === 'media')).length;
+  const resumen = graves ? `<span class="rev-n rev-alta">${graves} grave${graves === 1 ? '' : 's'}</span>`
+    : aRevisar ? `<span class="rev-n rev-media">${aRevisar} a revisar</span>` : '<span class="rev-n rev-ok">todo en orden ✓</span>';
+  return `<button class="btn btn-secondary btn-sm btn-w" data-acc="cli-revisar">🔍 Revisar datos · ${resumen}</button>`;
+}
+
+const ICONO_NIVEL = { alta: '🔴', media: '🟡', info: 'ℹ️' };
+function modalRevision() {
+  const rev = revisionDatos(clientesARevisar());
+  const graves = cuentaNivel(rev, 'alta'), medias = cuentaNivel(rev, 'media'), infos = cuentaNivel(rev, 'info');
+  const cuerpo = rev.length ? rev.map(r => `
+    <div class="rev-cli">
+      <button type="button" class="rev-nombre" data-abrir="${r.cliente.id}">${esc(nombreCompleto(r.cliente))}
+        ${esAdmin() ? `<span class="prev-entr" style="color:${entrenadorDe(r.cliente.entrenador_id)?.color || '#888'}">${esc(entrenadorDe(r.cliente.entrenador_id)?.nombre || '')}</span>` : ''}</button>
+      <ul class="rev-inc">${r.incidencias.map(i => `<li class="rev-${i.nivel}">${ICONO_NIVEL[i.nivel]} ${esc(i.texto)}</li>`).join('')}</ul>
+    </div>`).join('')
+    : '<div class="alert alert-ok">✔ No se ha encontrado ninguna incoherencia en los clientes que estás viendo.</div>';
+  const m = abrirModal(`
+    <div class="modal-title">Revisión de datos</div>
+    <p class="sub">${rev.length ? `${graves} grave${graves === 1 ? '' : 's'} · ${medias} a revisar · ${infos} aviso${infos === 1 ? '' : 's'} · en ${rev.length} cliente${rev.length === 1 ? '' : 's'}` : 'Todo cuadra'}</p>
+    <div class="rev-lista">${cuerpo}</div>
+    <p class="hint" style="margin-top:10px">Se comprueba: sesiones hechas sin bono que las cubra, reservas sin crédito, reservas pasadas sin confirmar (cuentan como hechas),
+      sesiones repetidas, solapes del mismo entrenador y datos aproximados. Pulsa un nombre para abrir su ficha.</p>
+    <div class="modal-actions"><button type="button" class="btn btn-secondary" data-cerrar>Cerrar</button></div>`, 'modal-lg');
+  m.el.querySelector('[data-cerrar]').addEventListener('click', m.cerrar);
+  m.el.addEventListener('click', e => {
+    const b = e.target.closest('[data-abrir]');
+    if (!b) return;
+    S.cliSel = b.dataset.abrir;
+    m.cerrar();
+    bus.repintar();
+  });
+}
+
 export function renderClientes(el) {
   const c = S.cliSel ? clienteDe(S.cliSel) : null;
   if (S.cliSel && !c) S.cliSel = null;
@@ -238,6 +293,7 @@ export function renderClientes(el) {
         ${seg('pago', [['todos', 'Pago: todos'], ['pendiente', 'Pendiente'], ['programado', 'Programado'], ['pagado', 'Pagado'], ['renovar', 'Renovar']])}
         <label class="check check-sm"><input type="checkbox" data-acc="cli-pendientes" ${S.cli.pendientes ? 'checked' : ''}> Solo con info pendiente</label>
         <label class="check check-sm"><input type="checkbox" data-acc="cli-archivados" ${S.cli.archivados ? 'checked' : ''}> Ver archivados</label>
+        ${revisarBotonHTML()}
         <div data-cobros>${cobrosHTML()}</div>
         <div class="lista-items">${listaHTML()}</div>
       </aside>
@@ -267,6 +323,7 @@ async function marcarPagados(bonos, mensaje) {
 export const accionesClientes = {
   'cli-sel': t => { S.cliSel = t.dataset.id; bus.repintar(); },
   'cli-volver': () => { S.cliSel = null; bus.repintar(); },
+  'cli-revisar': () => modalRevision(),
   'filtro': t => { S.cli[t.dataset.k] = t.dataset.v; bus.repintar(); },
   'cli-archivados': t => { S.cli.archivados = t.checked; bus.repintar(); },
   'cli-pendientes': t => { S.cli.pendientes = t.checked; bus.repintar(); },

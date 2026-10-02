@@ -114,6 +114,14 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   Solo el administrador puede confirmar o deshacer un pago — lo impone también la base de datos (`sql/07_pagos.sql`),
   no solo la pantalla. Al llegar el estado de pago de la lista de clientes, se ve sin entrar en cada ficha, con un
   filtro «Pago» y un aviso arriba con el total pendiente de cobro.
+- **Sesiones sin bono**: «Quedan» nunca baja de 0, así que antes un cliente con más sesiones hechas que las de sus bonos
+  parecía simplemente «agotado». Ahora se calcula aparte (`creditos().sinBono`): la ficha avisa en rojo
+  («Ha hecho 5 sesiones y sus bonos suman 3: 2 sin bono, ≈ 70 €»), cada bono muestra «usadas X de N» (las hechas se
+  reparten entre los bonos, el más antiguo primero), y en la lista sale el chip «⚠ N SIN BONO».
+- **Revisar datos** (botón en la lista de Clientes, respeta el filtro de entrenador): busca incoherencias en todos los
+  clientes activos — sesiones hechas sin bono, reservas sin crédito, reservas pasadas sin confirmar (cuentan como hechas),
+  sesiones repetidas, solapes del mismo entrenador (ignorando horas sin registrar y «no vino»), potenciales con
+  sesiones, bonos sin método de pago — ordenadas por gravedad, con enlace a cada ficha.
 - **Renovar**: si el último bono de un cliente está pagado y le quedan 2 sesiones o menos (o se agotó) sin que haya
   un bono nuevo, se marca «RENOVAR» con el importe del último bono como referencia.
 - **Resumen → Facturación prevista**: la fecha de pago de cada bono decide en qué mes cuenta; muestra el total de

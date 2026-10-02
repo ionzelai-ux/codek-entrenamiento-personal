@@ -59,7 +59,30 @@ export function creditos(cliente, ahora = new Date()) {
     else if (e === 'no_vino') noVino++;
   }
   const restantes = Math.max(0, total - hechas);
-  return { total, hechas, reservadas, noVino, restantes, libres: restantes - reservadas };
+  // sinBono: sesiones ya hechas que ningún bono cubre (restantes se queda en 0 y escondería este descuadre)
+  return { total, hechas, reservadas, noVino, restantes, libres: restantes - reservadas, sinBono: Math.max(0, hechas - total) };
+}
+
+// Cuánto lleva gastado cada bono: las sesiones hechas se reparten por orden entre los bonos (el más antiguo
+// primero). Lo que no cabe en ninguno es `sinBono`. Devuelve { porBono: Map(id → {usadas, total}), sinBono }.
+export function consumoPorBono(cliente, ahora = new Date()) {
+  const bonos = [...(cliente.bonos || [])].sort((a, b) =>
+    String(a.fecha_inicio || '').localeCompare(String(b.fecha_inicio || '')) || String(a.fecha_pago || '').localeCompare(String(b.fecha_pago || '')));
+  let pendientes = (cliente.sesiones || []).filter(s => { const e = estadoEfectivo(s, ahora); return e === 'hecha' || e === 'auto'; }).length;
+  const porBono = new Map();
+  for (const b of bonos) {
+    const total = Number(b.sesiones) || 0, usadas = Math.min(total, pendientes);
+    pendientes -= usadas;
+    porBono.set(b.id, { usadas, total });
+  }
+  return { porBono, sinBono: pendientes };
+}
+
+// Lo que costaría cada sesión según su último bono (precio ÷ sesiones); null si no tiene ningún bono.
+export function precioSesionEstimado(cliente) {
+  const ultimo = [...(cliente.bonos || [])].sort((a, b) => String(a.fecha_pago).localeCompare(String(b.fecha_pago))).pop();
+  const n = Number(ultimo?.sesiones) || 0;
+  return ultimo && n > 0 ? (Number(ultimo.precio) || 0) / n : null;
 }
 
 // Estado de pago de un bono: 'pagado' solo si el administrador lo confirmó (pagado_el);
@@ -203,6 +226,95 @@ export function camposPendientes(c) {
     else if (bonos.some(b => !b.metodo_pago)) falta.push('método de pago');
   }
   return falta;
+}
+
+// ── Revisión de datos ─────────────────────────────────────────────────────
+// Busca incoherencias que hacen que las cifras no se puedan creer a ciegas. Cada incidencia lleva un nivel:
+//   alta  = el dinero o las sesiones no cuadran (hay que corregirlo)
+//   media = conviene revisarlo
+//   info  = dato aproximado o incompleto
+const fmtF = iso => String(iso).split('-').reverse().join('/');
+const fmtE = n => Number(n).toLocaleString('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 });
+const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
+const NIVEL = { alta: 0, media: 1, info: 2 };
+const NOTA_HORA = 'Hora no registrada';
+
+export function incidenciasCliente(c, ahora = new Date()) {
+  const out = [];
+  const nueva = (nivel, clave, texto) => out.push({ nivel, clave, texto });
+  const sesiones = c.sesiones || [], bonos = c.bonos || [];
+  const cr = creditos(c, ahora);
+  const estados = sesiones.map(s => ({ s, e: estadoEfectivo(s, ahora) }));
+  const conSesion = estados.filter(x => x.e !== 'no_vino');
+
+  if (c.estado === 'potencial') {
+    if (conSesion.length || bonos.length) nueva('media', 'potencial_con_datos', 'Está como potencial pero ya tiene sesiones o bonos: ¿falta convertirlo en cliente?');
+    return out;
+  }
+  if (!bonos.length) {
+    if (conSesion.length) nueva('alta', 'sesiones_sin_bono', `Tiene ${plural(conSesion.length, 'sesión', 'sesiones')} (${plural(cr.hechas, 'hecha', 'hechas')}) y ningún bono registrado: no consta qué se le ha cobrado.`);
+    else nueva('media', 'sin_bono', 'Es cliente pero no tiene ningún bono.');
+  } else {
+    if (cr.sinBono > 0) {
+      const p = precioSesionEstimado(c);
+      nueva('alta', 'sesiones_sin_bono', `Ha hecho ${cr.hechas} sesiones y sus bonos suman ${cr.total}: ${plural(cr.sinBono, 'sesión', 'sesiones')} sin bono${p ? ` (≈ ${fmtE(cr.sinBono * p)} a ${fmtE(p)}/sesión)` : ''}.`);
+    }
+    if (cr.libres < 0) {
+      const de = -cr.libres;
+      nueva('media', 'reservadas_de_mas', `${plural(de, 'sesión reservada', 'sesiones reservadas')} sin crédito en el bono${cr.restantes === 0 ? ' (bono agotado)' : ''}.`);
+    }
+    const sinMetodo = bonos.filter(b => !b.metodo_pago).length;
+    if (sinMetodo) nueva('info', 'bono_sin_metodo', `${plural(sinMetodo, 'bono', 'bonos')} sin método de pago.`);
+  }
+  const auto = estados.filter(x => x.e === 'auto').map(x => x.s).sort((a, b) => a.fecha.localeCompare(b.fecha));
+  if (auto.length) {
+    const ejemplo = auto.slice(-3).map(s => fmtF(s.fecha).slice(0, 5)).join(', ');
+    nueva('media', 'sin_confirmar', `${plural(auto.length, 'reserva pasada sin confirmar', 'reservas pasadas sin confirmar')} (${ejemplo}): cuentan como hechas; confírmalas o márcalas «No vino».`);
+  }
+  const vistas = new Map();
+  for (const { s } of conSesion) { const k = `${s.fecha} ${s.hora}`; vistas.set(k, (vistas.get(k) || 0) + 1); }
+  const duplicadas = [...vistas].filter(([, n]) => n > 1).map(([k]) => k);
+  if (duplicadas.length) nueva('alta', 'duplicadas', `Sesiones repetidas el mismo día y hora: ${duplicadas.slice(0, 3).map(k => `${fmtF(k.slice(0, 10))} ${k.slice(11)}`).join(', ')}. ¿Se contaron dos veces?`);
+  const aprox = sesiones.filter(s => s.nota === NOTA_HORA).length;
+  if (aprox) nueva('info', 'hora_aproximada', `${plural(aprox, 'sesión', 'sesiones')} con la hora sin registrar (aparecen a las 10:00 como aproximación).`);
+  return out;
+}
+
+// Solapes de un mismo entrenador entre sesiones con hora fiable. Devuelve [{ a, b }] (parejas de sesiones con su cliente).
+export function solapesEntrenadores(clientes) {
+  const porEntr = new Map();
+  for (const c of clientes) {
+    for (const s of c.sesiones || []) {
+      if (s.estado === 'no_vino' || s.nota === NOTA_HORA) continue;
+      if (!porEntr.has(c.entrenador_id)) porEntr.set(c.entrenador_id, []);
+      porEntr.get(c.entrenador_id).push({ ...s, cliente: c });
+    }
+  }
+  const res = [];
+  for (const lista of porEntr.values()) {
+    lista.sort((x, y) => x.fecha.localeCompare(y.fecha) || x.hora.localeCompare(y.hora));
+    for (let i = 0; i < lista.length; i++) {
+      for (let j = i + 1; j < lista.length && lista[j].fecha === lista[i].fecha; j++) {
+        if (lista[i].cliente.id !== lista[j].cliente.id && solapan(lista[i], lista[j])) res.push({ a: lista[i], b: lista[j] });
+      }
+    }
+  }
+  return res;
+}
+
+// Revisión de todos los clientes (activos): [{ cliente, incidencias }] con lo más grave primero.
+export function revisionDatos(clientes, ahora = new Date()) {
+  const activos = clientes.filter(c => c.activo !== false);
+  const mapa = new Map(activos.map(c => [c.id, incidenciasCliente(c, ahora)]));
+  const nombre = c => `${c.nombre} ${c.apellidos || ''}`.trim();
+  for (const { a, b } of solapesEntrenadores(activos)) {
+    for (const [x, y] of [[a, b], [b, a]]) {
+      mapa.get(x.cliente.id)?.push({ nivel: 'media', clave: 'solape', texto: `Coincide con ${nombre(y.cliente)} el ${fmtF(x.fecha)} a las ${y.hora} (mismo entrenador).` });
+    }
+  }
+  return activos.map(c => ({ cliente: c, incidencias: mapa.get(c.id).sort((p, q) => NIVEL[p.nivel] - NIVEL[q.nivel]) }))
+    .filter(r => r.incidencias.length)
+    .sort((p, q) => NIVEL[p.incidencias[0].nivel] - NIVEL[q.incidencias[0].nivel] || nombre(p.cliente).localeCompare(nombre(q.cliente), 'es'));
 }
 
 // Para el aviso rápido en la lista de clientes: si lo que hay escrito dice básicamente "no tiene",

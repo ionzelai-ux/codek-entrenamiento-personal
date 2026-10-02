@@ -49,6 +49,15 @@ function sesion(c, fecha, hora, estado = 'reservada') {
   const nerea = cliente({ entrenador_id: 'p-jes', nombre: 'Nerea', apellidos: 'Demo Vidal', estado: 'efectivo', origen: 'codek', telefono: '600 000 003' });
   bono(nerea, 4, 180, addDias(lun, -30), addDias(lun, -30), 'efectivo', addDias(lun, -30));
   [-28, -21].forEach(n => sesion(nerea, addDias(lun, n), '09:00', 'hecha'));
+  // Como Patricia en producción: bono de 3 sesiones pero ya lleva 5 hechas (+1 no vino, +1 reservada) → «SIN BONO»
+  const marina = cliente({ entrenador_id: 'p-edu', nombre: 'Marina', apellidos: 'Demo Sin Bono', estado: 'efectivo', origen: 'externo', telefono: '600 000 005', lesiones: 'Ninguna' });
+  bono(marina, 3, 105, addDias(lun, -14), addDias(lun, -14), 'efectivo');
+  [-14, -11, -10, -7, -2].forEach(n => sesion(marina, addDias(lun, n), '11:30', 'hecha'));
+  sesion(marina, addDias(lun, -4), '11:30', 'no_vino');
+  sesion(marina, addDias(lun, 7), '11:30');
+  // Como Natalí: sesiones hechas y ningún bono todavía
+  const sofia = cliente({ entrenador_id: 'p-edu', nombre: 'Sofía', apellidos: 'Demo Sin Bono Alguno', estado: 'efectivo', origen: 'codek', telefono: '600 000 006', lesiones: 'Ninguna' });
+  [-12, -9, -5].forEach(n => { sesion(sofia, addDias(lun, n), '10:00', 'hecha'); sesiones[sesiones.length - 1].nota = 'Hora no registrada'; });
   // Bono con pago programado para el mes siguiente
   const ivan = cliente({ entrenador_id: 'p-edu', nombre: 'Iván', apellidos: 'Demo Ortiz', estado: 'efectivo', origen: 'externo', telefono: '600 000 004' });
   bono(ivan, 8, 336, addDias(hoy.slice(0, 7) + '-01', 35).slice(0, 7) + '-05', addDias(hoy.slice(0, 7) + '-01', 35).slice(0, 7) + '-05', 'transferencia');
