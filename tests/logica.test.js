@@ -7,7 +7,7 @@ import {
   estadoCobro, facturacionMes,
   comisionBono, esDeclaradoPorDefecto, bonosLiquidablesMes, liquidacionMes, totalesComisiones, agruparComisionesPorEntrenador,
   entrenadoresConComision, DEFAULT_CONFIG_COMISIONES, tieneLesionActiva,
-  sesionesCambiables, horaNueva, planCambioHorario, diasFijosActualizados,
+  sesionesCambiables, horaNueva, planCambioHorario, diasFijosActualizados, etiquetaMes,
 } from '../js/logica.js';
 
 test('fechas: lunes, día de la semana y meses', () => {
@@ -251,6 +251,15 @@ test('facturación prevista: este mes y el siguiente según las fechas de pago',
   const oct = facturacionMes(cl, '2026-10', '2026-09-19');
   assert.deepEqual([oct.total, oct.pagado, oct.pendiente, oct.programado], [315, 40, 0, 275]);
   assert.equal(facturacionMes(cl, '2026-12', '2026-09-19').total, 0);
+});
+
+test('etiqueta de mes: este, siguiente, pasado (también cruzando de año) o nada', () => {
+  assert.equal(etiquetaMes('2026-10', '2026-10-02'), 'ESTE MES');
+  assert.equal(etiquetaMes('2026-11', '2026-10-02'), 'MES SIGUIENTE');
+  assert.equal(etiquetaMes('2026-09', '2026-10-02'), 'MES PASADO');
+  assert.equal(etiquetaMes('2026-08', '2026-10-02'), '');
+  assert.equal(etiquetaMes('2027-01', '2026-12-31'), 'MES SIGUIENTE');
+  assert.equal(etiquetaMes('2026-12', '2027-01-05'), 'MES PASADO');
 });
 
 // ── Comisiones de los entrenadores ──────────────────────────────────────────

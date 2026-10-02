@@ -117,7 +117,11 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
 - **Renovar**: si el último bono de un cliente está pagado y le quedan 2 sesiones o menos (o se agotó) sin que haya
   un bono nuevo, se marca «RENOVAR» con el importe del último bono como referencia.
 - **Resumen → Facturación prevista**: la fecha de pago de cada bono decide en qué mes cuenta; muestra el total de
-  este mes y del siguiente, desglosado en pagado / pendiente de cobro / programado, con el detalle de cada bono.
+  dos meses seguidos (por defecto este y el siguiente; con ◀ ▶ se puede ir hacia atrás, p. ej. para ver lo que se
+  cobró en septiembre), desglosado en pagado / pendiente de cobro / programado, con el detalle de cada bono.
+- **Filtro por entrenador** (solo administrador): botones «Todos · Eduardo · Jesús» en Clientes, Calendario, Resumen y
+  Comisiones, sincronizados con el desplegable de la cabecera. En el Resumen filtran todo (tarjetas, detalle por mes,
+  por entrenador y por origen).
 - **Comisiones** (pestaña solo del administrador; `sql/08_comisiones.sql`): liquidación mensual de lo que se le paga
   a cada entrenador, sobre los bonos que el administrador confirmó como pagados ese mes. Por cada bono:
   importe del bono → si se trata como *declarado* (por defecto, tarjeta/transferencia; se puede forzar a mano) se

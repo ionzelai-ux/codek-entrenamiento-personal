@@ -1,7 +1,8 @@
-// Resumen (solo admin): facturación prevista (este mes y el siguiente), y por mes, entrenador y origen.
-import { S, bus, entrenadorDe, nombreCompleto } from './store.js';
-import { esc, nombreMes, fmtEUR, fmtFecha } from './util.js';
-import { agrupar, sumar, facturacionMes, hoyISO, primerDiaMes } from './logica.js';
+// Resumen (solo admin): facturación de dos meses seguidos (por defecto este y el siguiente, navegable hacia
+// atrás y adelante), y detalle por mes, entrenador y origen. Todo respeta el entrenador elegido.
+import { S, bus, entrenadorDe, nombreCompleto, entrenadorFiltroId } from './store.js';
+import { esc, nombreMes, fmtEUR, fmtFecha, filtroEntrenadorHTML } from './util.js';
+import { agrupar, sumar, facturacionMes, etiquetaMes, hoyISO, primerDiaMes } from './logica.js';
 
 const fila = (nombre, r, color = '') => `<tr>
   <td>${color ? `<i class="tc" style="background:${color}"></i>` : ''}${esc(nombre)}</td>
@@ -41,16 +42,26 @@ function panelMes(f, etiqueta) {
 
 export function renderResumen(el) {
   const mes = S.resumenMes, hoy = hoyISO();
-  const porEntr = agrupar(S.clientes, c => c.entrenador_id, mes, hoy);
-  const porOrigen = agrupar(S.clientes, c => c.origen, mes, hoy);
+  const filtro = entrenadorFiltroId();                       // null = todos los entrenadores
+  const clientes = filtro ? S.clientes.filter(c => c.entrenador_id === filtro) : S.clientes;
+  const porEntr = agrupar(clientes, c => c.entrenador_id, mes, hoy);
+  const porOrigen = agrupar(clientes, c => c.origen, mes, hoy);
   const total = sumar(porEntr.values());
   const vacio = { efectivos: 0, potenciales: 0, cobrado: 0, pendiente: 0, programado: 0, estimado: 0 };
-  const este = facturacionMes(S.clientes, hoy.slice(0, 7), hoy);
-  const siguiente = facturacionMes(S.clientes, primerDiaMes(hoy, 1).slice(0, 7), hoy);
+  const base = S.resumenBase, sigBase = primerDiaMes(base + '-01', 1).slice(0, 7);
+  const este = facturacionMes(clientes, base, hoy);
+  const siguiente = facturacionMes(clientes, sigBase, hoy);
 
   el.innerHTML = `
+    <div class="resumen-filtro">${filtroEntrenadorHTML(S.entrenadores, S.filtroEntr)}</div>
     <div class="section-title">Facturación prevista</div>
-    <div class="prevs">${panelMes(este, 'ESTE MES')}${panelMes(siguiente, 'MES SIGUIENTE')}</div>
+    <div class="cal-nav" style="margin-bottom:14px">
+      <button class="cal-btn" data-acc="res-base-prev" aria-label="Meses anteriores">◀</button>
+      <div class="cal-month-lbl">${nombreMes(base).toUpperCase()} – ${nombreMes(sigBase).toUpperCase()}</div>
+      <button class="cal-btn" data-acc="res-base-next" aria-label="Meses siguientes">▶</button>
+      ${base === hoy.slice(0, 7) ? '' : '<button class="btn btn-secondary btn-sm" data-acc="res-base-hoy">Hoy</button>'}
+    </div>
+    <div class="prevs">${panelMes(este, etiquetaMes(base, hoy))}${panelMes(siguiente, etiquetaMes(sigBase, hoy))}</div>
     <p class="hint" style="margin-bottom:26px">Cada bono cuenta en el mes de su <b>fecha de pago</b>. «Pagado» = lo has confirmado tú; «Pendiente de cobro» = la fecha ya llegó y aún no lo has marcado;
       «Programado» = fecha de pago futura.</p>
 
@@ -69,7 +80,7 @@ export function renderResumen(el) {
     </div>
     <div class="section-title">Por entrenador</div>
     <div class="tabla-wrap"><table class="tabla">${cabecera('Entrenador')}<tbody>
-      ${S.entrenadores.map(e => fila(e.nombre, porEntr.get(e.id) || vacio, e.color)).join('')}
+      ${S.entrenadores.filter(e => !filtro || e.id === filtro).map(e => fila(e.nombre, porEntr.get(e.id) || vacio, e.color)).join('')}
     </tbody></table></div>
     <div class="section-title" style="margin-top:24px">Por origen</div>
     <div class="tabla-wrap"><table class="tabla">${cabecera('Origen')}<tbody>
@@ -81,7 +92,11 @@ export function renderResumen(el) {
 }
 
 const moverMes = n => { S.resumenMes = primerDiaMes(S.resumenMes + '-01', n).slice(0, 7); bus.repintar(); };
+const moverBase = n => { S.resumenBase = primerDiaMes(S.resumenBase + '-01', n).slice(0, 7); bus.repintar(); };
 export const accionesResumen = {
   'res-prev': () => moverMes(-1),
   'res-next': () => moverMes(1),
+  'res-base-prev': () => moverBase(-1),
+  'res-base-next': () => moverBase(1),
+  'res-base-hoy': () => { S.resumenBase = hoyISO().slice(0, 7); bus.repintar(); },
 };

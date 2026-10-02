@@ -29,7 +29,7 @@ function pintarCabecera() {
   const tabs = [['calendario', 'Calendario'], ['clientes', 'Clientes'], ...(admin ? [['resumen', 'Resumen'], ['comisiones', 'Comisiones'], ['aimharder', 'AimHarder']] : [])];
   $('nav').innerHTML = tabs.map(([v, l]) =>
     `<button class="nav-tab ${S.vista === v ? 'active' : ''}" data-acc="vista" data-v="${v}">${l}</button>`).join('');
-  const selector = admin && S.vista !== 'resumen' && S.vista !== 'aimharder'
+  const selector = admin && S.vista !== 'aimharder'
     ? `<select id="selEntr" class="form-input sel-entr" aria-label="Entrenador">
          <option value="todos">Todos los entrenadores</option>
          ${S.entrenadores.map(e => `<option value="${e.id}" ${S.filtroEntr === e.id ? 'selected' : ''}>${esc(e.nombre)}</option>`).join('')}

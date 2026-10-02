@@ -259,6 +259,14 @@ export function facturacionMes(clientes, mes, hoy = hoyISO()) {
   return { mes, ...t, filas };
 }
 
+// Cómo se llama un mes ('YYYY-MM') respecto a hoy, para las tarjetas de facturación: «ESTE MES»,
+// «MES SIGUIENTE», «MES PASADO» o nada si está más lejos.
+export function etiquetaMes(mes, hoy = hoyISO()) {
+  const n = m => { const [y, mm] = m.split('-').map(Number); return y * 12 + mm; };
+  const d = n(mes) - n(hoy.slice(0, 7));
+  return d === 0 ? 'ESTE MES' : d === 1 ? 'MES SIGUIENTE' : d === -1 ? 'MES PASADO' : '';
+}
+
 // ── Liquidación de comisiones de los entrenadores ─────────────────────────
 // Condiciones pactadas con Jon (editables desde la pantalla, se guardan en comisiones_config):
 //   · % de comisión sobre el importe del bono: uno si el cliente es de origen Codek, otro si lo trajo el

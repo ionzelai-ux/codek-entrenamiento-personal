@@ -2,7 +2,7 @@
 // Los porcentajes y el trato de cada bono (declarado / pago en nómina) se pueden tocar aquí mismo y
 // todo se recalcula al momento, como una hoja de cálculo; se guarda en Supabase para la próxima vez.
 import { S, bus, esAdmin, entrenadorDe, nombreCompleto, entrenadorFiltroId } from './store.js';
-import { esc, fmtEUR, fmtFecha, nombreMes, etiquetaMetodo, toast } from './util.js';
+import { esc, fmtEUR, fmtFecha, nombreMes, etiquetaMetodo, toast, filtroEntrenadorHTML } from './util.js';
 import {
   hoyISO, primerDiaMes, liquidacionMes, totalesComisiones, agruparComisionesPorEntrenador, entrenadoresConComision,
   DEFAULT_CONFIG_COMISIONES,
@@ -117,6 +117,7 @@ export function renderComisiones(el) {
   if (!esAdmin()) { el.innerHTML = ''; return; }
   if (!S.comisiones.cargado) { el.innerHTML = '<div class="vacio">Cargando…</div>'; return; }
   el.innerHTML = `
+    <div class="resumen-filtro">${filtroEntrenadorHTML(S.entrenadores, S.filtroEntr)}</div>
     ${panelConfigHTML(S.comisiones.config || DEFAULT_CONFIG_COMISIONES)}
     <div class="cal-nav" style="margin:22px 0 18px">
       <button class="cal-btn" data-acc="com-mes-prev" aria-label="Mes anterior">◀</button>
