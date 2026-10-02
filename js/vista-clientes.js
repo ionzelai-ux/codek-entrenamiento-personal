@@ -1,6 +1,6 @@
 // Clientes: lista con filtros + ficha (datos, bonos, días fijos, créditos y sesiones).
 import { S, bus, esAdmin, entrenadorDe, nombreCompleto, clienteDe, entrenadorFiltroId } from './store.js';
-import { esc, dialogo, toast, fmtEUR, fmtFecha, fmtFechaDia, textoDias, etiquetaMetodo } from './util.js';
+import { esc, dialogo, toast, fmtEUR, fmtFecha, fmtFechaDia, textoDias, etiquetaMetodo, filtroEntrenadorHTML } from './util.js';
 import { hoyISO, creditos, estadoEfectivo, estadoPago, estadoCobro, edad, camposPendientes, tieneLesionActiva } from './logica.js';
 import { modalCliente, modalConvertir, modalBono, modalEditarBono, modalGenerar, modalCambiarHorario, modalSesion, cambiarEstadoSesion } from './modales.js';
 
@@ -232,6 +232,7 @@ export function renderClientes(el) {
       <aside class="lista">
         <button class="btn btn-primary btn-w" data-acc="cli-nuevo">+ Nueva ficha</button>
         <input class="form-input" data-filtro-texto placeholder="Buscar nombre, teléfono, email…" value="${esc(texto)}">
+        ${esAdmin() ? filtroEntrenadorHTML(S.entrenadores, S.filtroEntr) : ''}
         ${seg('estado', [['todos', 'Todos'], ['potencial', 'Potenciales'], ['efectivo', 'Clientes']])}
         ${seg('origen', [['todos', 'Todos'], ['codek', 'Codek'], ['externo', 'Externos']])}
         ${seg('pago', [['todos', 'Pago: todos'], ['pendiente', 'Pendiente'], ['programado', 'Programado'], ['pagado', 'Pagado'], ['renovar', 'Renovar']])}

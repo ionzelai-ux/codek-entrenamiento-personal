@@ -223,7 +223,10 @@ a.meta-chip:hover { border-color: var(--red); color: var(--text); }
 
 /* ── Calendario ── */
 .cal-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
-.cal-bar-der { display: flex; align-items: center; gap: 10px; }
+.cal-bar-der { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.seg-entr button { display: inline-flex; align-items: center; gap: 2px; }
+.seg-entr .tc { margin-right: 5px; }
+.seg-entr button.on .tc { box-shadow: 0 0 0 1.5px #fff; }
 .cal-nav { display: flex; align-items: center; gap: 10px; }
 .cal-month-lbl { font-family: var(--display); font-size: 24px; letter-spacing: 3px; min-width: 200px; text-align: center; }
 .cal-btn { background: var(--panel); border: 1px solid var(--border); color: var(--text); width: 32px; height: 32px; cursor: pointer; font-size: 13px; }

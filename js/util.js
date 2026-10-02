@@ -13,6 +13,11 @@ export const textoDias = dias => (dias || []).slice().sort((a, b) => a.dia - b.d
   .map(d => `${DIAS_SEM.find(x => x[0] === d.dia)?.[1] || '?'} ${d.hora}`).join(' · ');
 export const METODOS_PAGO = [['efectivo', '💶 Efectivo'], ['tarjeta', '💳 Tarjeta'], ['transferencia', '🏦 Transferencia']];
 export const etiquetaMetodo = m => METODOS_PAGO.find(x => x[0] === m)?.[1] || '';
+// Botones «Todos · Eduardo · Jesús» para filtrar por entrenador (solo el administrador). Los pinta cada vista
+// y los atiende la acción global «filtro-entr» de app.js.
+export const filtroEntrenadorHTML = (entrenadores, activo) => `<div class="seg seg-sm seg-entr" role="group" aria-label="Filtrar por entrenador">${
+  [{ id: 'todos', nombre: 'Todos', color: null }, ...entrenadores].map(e =>
+    `<button class="${activo === e.id ? 'on' : ''}" data-acc="filtro-entr" data-v="${esc(e.id)}">${e.color ? `<i class="tc" style="background:${esc(e.color)}"></i>` : ''}${esc(e.nombre)}</button>`).join('')}</div>`;
 export const fmtEUR = n => Number(n || 0).toLocaleString('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 });
 
 export function toast(msg, error = false) {

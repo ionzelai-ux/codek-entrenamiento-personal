@@ -1,6 +1,6 @@
 // Calendario: vista de semana (columnas por día con horas) o de mes (cuadrícula).
 import { S, bus, esAdmin, entrenadorDe, nombreCompleto, entrenadorFiltroId } from './store.js';
-import { esc, nombreMes, mesCorto, dialogo, toast, fmtFechaDia } from './util.js';
+import { esc, nombreMes, mesCorto, dialogo, toast, fmtFechaDia, filtroEntrenadorHTML } from './util.js';
 import {
   hoyISO, addDias, lunesDe, primerDiaMes, ultimoDiaMes, parseISO, horaAMin, minAHora,
   estadoEfectivo, repartirCarriles, buscarConflictos,
@@ -122,6 +122,7 @@ export function renderCalendario(el) {
         <button class="btn btn-secondary btn-sm" data-acc="cal-hoy">Hoy</button>
       </div>
       <div class="cal-bar-der">
+        ${esAdmin() ? filtroEntrenadorHTML(S.entrenadores, S.filtroEntr) : ''}
         <div class="seg seg-sm">
           <button class="${S.cal.modo === 'semana' ? 'on' : ''}" data-acc="cal-modo" data-v="semana">Semana</button>
           <button class="${S.cal.modo === 'mes' ? 'on' : ''}" data-acc="cal-modo" data-v="mes">Mes</button>

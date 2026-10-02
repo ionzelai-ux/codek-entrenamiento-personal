@@ -39,7 +39,18 @@ function pintarCabecera() {
     <button class="btn btn-secondary btn-sm" data-acc="salir">Salir</button>`;
 }
 
+// Cambia el entrenador que se está viendo (solo el administrador). Lo usan el desplegable de la cabecera y los
+// botones de cada pantalla; la cabecera se repinta para que el desplegable muestre siempre el mismo valor.
+async function cambiarFiltroEntr(valor) {
+  if (!esAdmin()) return;
+  S.filtroEntr = valor;
+  if (S.cliSel && valor !== 'todos' && clienteDe(S.cliSel)?.entrenador_id !== valor) S.cliSel = null;
+  pintarCabecera();
+  await (S.vista === 'calendario' ? cargarCalendario() : pintar());
+}
+
 const GLOBALES = {
+  'filtro-entr': t => cambiarFiltroEntr(t.dataset.v),
   vista: t => {
     if (SOLO_ADMIN.includes(t.dataset.v) && !esAdmin()) return;
     S.vista = t.dataset.v;
@@ -71,9 +82,7 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', async e => {
   if (e.target.id !== 'selEntr') return;
-  S.filtroEntr = e.target.value;
-  if (S.cliSel && S.filtroEntr !== 'todos' && clienteDe(S.cliSel)?.entrenador_id !== S.filtroEntr) S.cliSel = null;
-  try { await (S.vista === 'calendario' ? cargarCalendario() : pintar()); } catch (err) { toast(err.message, true); }
+  try { await cambiarFiltroEntr(e.target.value); } catch (err) { toast(err.message, true); }
 });
 iniciarArrastre();
 window.addEventListener('unhandledrejection', e => { toast(e.reason?.message || 'Error inesperado', true); });
