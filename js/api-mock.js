@@ -190,7 +190,7 @@ export async function listarOverridesComisiones() {
 export async function guardarOverrideComision(bono_id, cambios) {
   if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
   let o = comisionesBono.find(x => x.bono_id === bono_id);
-  if (!o) { o = { bono_id, declarado: null, pago_entrenador: 'efectivo' }; comisionesBono.push(o); }
+  if (!o) { o = { bono_id, declarado: null, pago_entrenador: 'efectivo', excluido: false }; comisionesBono.push(o); }
   Object.assign(o, cambios);
   return clonar(o);
 }

@@ -313,6 +313,12 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
 .seg-inline button { flex: none; padding: 5px 9px; }
 .tabla-com th, .tabla-com td { white-space: nowrap; }
 .tabla-com .check { white-space: nowrap; }
+.com-incluir { text-align: center; }
+.com-incluir input { accent-color: var(--red); width: 16px; height: 16px; cursor: pointer; }
+.tabla-com tr.com-excluida td { opacity: .45; }
+.tabla-com tr.com-excluida td.com-incluir, .tabla-com tr.com-excluida td:nth-child(2) { opacity: 1; }
+.tabla-com tr.com-excluida td.num.verde { text-decoration: line-through; }
+.com-aviso { color: var(--yellow); }
 .com-grupo { margin-bottom: 22px; }
 .com-grupo-title { font-family: var(--display); font-size: 20px; letter-spacing: 2px; display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .com-grupo-title .tc { width: 11px; height: 11px; }

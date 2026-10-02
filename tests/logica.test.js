@@ -331,7 +331,35 @@ test('totales: importe, comisión y desglose efectivo/nómina', () => {
     { bono: { precio: 300 }, comision: 120, pagoEntrenador: 'efectivo' },
     { bono: { precio: 200 }, comision: 74, pagoEntrenador: 'nomina' },
   ];
-  assert.deepEqual(totalesComisiones(filas), { importe: 500, comision: 194, efectivo: 120, nomina: 74, n: 2 });
+  assert.deepEqual(totalesComisiones(filas), { importe: 500, comision: 194, efectivo: 120, nomina: 74, n: 2, excluidos: 0, importeExcluido: 0 });
+});
+
+test('excluir un bono de la liquidación: no comisiona, y no entra en los totales (se resume aparte)', () => {
+  const bono = { precio: 480, metodo_pago: 'efectivo' };
+  const normal = comisionBono(bono, 'externo', DEFAULT_CONFIG_COMISIONES);
+  const excl = comisionBono(bono, 'externo', DEFAULT_CONFIG_COMISIONES, { excluido: true });
+  assert.equal(normal.excluido, false);
+  assert.equal(normal.comision, 288);
+  assert.equal(excl.excluido, true);
+  assert.equal(excl.comision, 0);
+  assert.equal(excl.base, 480, 'se sigue viendo la base para poder volver a incluirlo');
+  // volver a incluirlo (excluido: false) lo deja como antes; el resto de ajustes se respeta
+  assert.equal(comisionBono(bono, 'externo', DEFAULT_CONFIG_COMISIONES, { excluido: false, pago_entrenador: 'nomina' }).excluido, false);
+
+  const filas = [
+    { bono: { precio: 300 }, comision: 120, pagoEntrenador: 'efectivo', excluido: false },
+    { bono: { precio: 200 }, comision: 0, pagoEntrenador: 'efectivo', excluido: true },
+    { bono: { precio: 100 }, comision: 0, pagoEntrenador: 'nomina', excluido: true },
+  ];
+  assert.deepEqual(totalesComisiones(filas), { importe: 300, comision: 120, efectivo: 120, nomina: 0, n: 1, excluidos: 2, importeExcluido: 300 });
+});
+
+test('liquidación del mes: el override «excluido» llega a la fila y deja la comisión a cero', () => {
+  const cl = [{ entrenador_id: 'edu', nombre: 'Ana', apellidos: '', origen: 'codek', bonos: [
+    { id: 'b1', precio: 336, metodo_pago: 'tarjeta', pagado_el: '2026-10-02' }, { id: 'b2', precio: 100, metodo_pago: 'efectivo', pagado_el: '2026-10-03' }] }];
+  const filas = liquidacionMes(cl, '2026-10', DEFAULT_CONFIG_COMISIONES, { b1: { excluido: true } });
+  assert.deepEqual(filas.map(f => [f.bono.id, f.excluido, f.comision > 0]), [['b1', true, false], ['b2', false, true]]);
+  assert.equal(totalesComisiones(filas).n, 1);
 });
 
 test('agrupar por entrenador: cada fila va con su entrenador', () => {

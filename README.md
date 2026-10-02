@@ -130,4 +130,7 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   (Codek o traído por el propio entrenador). Los cuatro porcentajes son editables y recalculan al momento, como una
   hoja de cálculo; el trato de cada bono y los porcentajes se guardan para la próxima vez. Un entrenador puede
   quedar fuera del sistema de comisiones (`perfiles.aplica_comisiones`, `sql/09_comisiones_entrenadores.sql`) sin que
-  le afecte al resto de la app: solo desaparece de esta pestaña.
+  le afecte al resto de la app: solo desaparece de esta pestaña. Y para casos excepcionales (p. ej. el cliente no vino
+  y hubo que contratar a otra persona) cada fila tiene una casilla **Incluir** (`sql/11_comisiones_excluir.sql`):
+  un bono excluido no comisiona, no entra en los totales (se avisa aparte de cuántos y cuánto quedan fuera) y se
+  puede volver a incluir en cualquier momento.

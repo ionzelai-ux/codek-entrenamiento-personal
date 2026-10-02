@@ -35,14 +35,15 @@ function datos() {
 }
 
 const CABECERA_TABLA = `<thead><tr>
-  <th>Cliente</th><th class="num">Pagado el</th><th>Origen</th><th class="num">Importe</th>
+  <th title="Desmarca para que este bono no comisione">Incluir</th><th>Cliente</th><th class="num">Pagado el</th><th>Origen</th><th class="num">Importe</th>
   <th>Declarado (IVA)</th><th>Se le paga en</th><th class="num">Base</th><th class="num">Comisión</th>
 </tr></thead>`;
 
 function filaHTML(f) {
   const c = f.cliente, b = f.bono;
-  return `<tr>
-    <td>${esc(nombreCompleto(c))}</td>
+  return `<tr class="${f.excluido ? 'com-excluida' : ''}">
+    <td class="com-incluir"><input type="checkbox" data-acc="com-incluir" data-bono="${b.id}" ${f.excluido ? '' : 'checked'} aria-label="Incluir en la liquidación" title="${f.excluido ? 'Excluido: no comisiona' : 'Incluido en la liquidación'}"></td>
+    <td>${esc(nombreCompleto(c))}${f.excluido ? ' <span class="chip gris">EXCLUIDO</span>' : ''}</td>
     <td class="num">${fmtFecha(b.pagado_el)}</td>
     <td><span class="chip ${c.origen === 'codek' ? 'granate' : 'gris'}">${c.origen === 'codek' ? 'CODEK' : 'EXTERNO'}</span> <span class="hint">${f.pct}%</span></td>
     <td class="num">${fmtEUR(b.precio)}</td>
@@ -62,7 +63,8 @@ const tablaFilasHTML = filas => filas.length
   : '<div class="vacio">Sin bonos confirmados como pagados ese mes</div>';
 
 const subtotalHTML = t => `<div class="com-subtotal">Facturado ${fmtEUR(t.importe)} · Comisión total <b>${fmtEUR(t.comision)}</b>
-  (efectivo ${fmtEUR(t.efectivo)} · nómina ${fmtEUR(t.nomina)}) · ${t.n} bono${t.n === 1 ? '' : 's'}</div>`;
+  (efectivo ${fmtEUR(t.efectivo)} · nómina ${fmtEUR(t.nomina)}) · ${t.n} bono${t.n === 1 ? '' : 's'}${t.excluidos
+    ? ` · <span class="com-aviso">${t.excluidos} excluido${t.excluidos === 1 ? '' : 's'} (${fmtEUR(t.importeExcluido)} sin comisionar)</span>` : ''}</div>`;
 
 function grupoHTML(entrenadorId, filas) {
   const e = entrenadorDe(entrenadorId);
@@ -135,7 +137,7 @@ export function alCambiarConfig(el) {
 }
 
 async function guardarOverride(bonoId, cambios) {
-  const actual = S.comisiones.overrides.get(bonoId) || { bono_id: bonoId, declarado: null, pago_entrenador: 'efectivo' };
+  const actual = S.comisiones.overrides.get(bonoId) || { bono_id: bonoId, declarado: null, pago_entrenador: 'efectivo', excluido: false };
   S.comisiones.overrides.set(bonoId, { ...actual, ...cambios });   // recalcula al momento
   refrescarTabla();
   try {
@@ -152,6 +154,7 @@ export const accionesComisiones = {
   'com-mes-next': () => moverMesCom(1),
   'com-declarado': t => guardarOverride(t.dataset.bono, { declarado: t.checked }),
   'com-pago': t => guardarOverride(t.dataset.bono, { pago_entrenador: t.dataset.v }),
+  'com-incluir': t => guardarOverride(t.dataset.bono, { excluido: !t.checked }),
   'com-guardar-config': async () => {
     try {
       S.comisiones.config = await S.api.guardarConfigComisiones(S.comisiones.config || DEFAULT_CONFIG_COMISIONES);

@@ -292,7 +292,10 @@ export function comisionBono(bono, origen, config, override = null) {
   if (declarado) base = base / (1 + (Number(config.iva_pct) || 0) / 100);
   if (pagoEntrenador === 'nomina') base = base / (1 + (Number(config.ss_pct) || 0) / 100);
   const pct = origen === 'codek' ? Number(config.comision_codek) || 0 : Number(config.comision_externo) || 0;
-  return { declarado, pagoEntrenador, pct, base, comision: base * (pct / 100) };
+  // Excluido a mano de la liquidación (circunstancias excepcionales, p. ej. no vino y hubo que contratar a otra
+  // persona): no comisiona nada, pero se sigue viendo la fila para poder volver a incluirla.
+  const excluido = !!override?.excluido;
+  return { declarado, pagoEntrenador, pct, base, excluido, comision: excluido ? 0 : base * (pct / 100) };
 }
 
 // Bonos que se liquidan en `mes` ('YYYY-MM'): los que Jon confirmó como pagados con esa fecha
@@ -316,10 +319,14 @@ export function liquidacionMes(clientes, mes, config, overridesPorBono = {}) {
   }));
 }
 
+// Los bonos excluidos no cuentan (ni en lo facturado, ni en la comisión, ni en `n`): se resumen aparte.
 export function totalesComisiones(filas) {
-  const t = { importe: 0, comision: 0, efectivo: 0, nomina: 0, n: filas.length };
+  const t = { importe: 0, comision: 0, efectivo: 0, nomina: 0, n: 0, excluidos: 0, importeExcluido: 0 };
   for (const f of filas) {
-    t.importe += Number(f.bono.precio) || 0;
+    const precio = Number(f.bono.precio) || 0;
+    if (f.excluido) { t.excluidos++; t.importeExcluido += precio; continue; }
+    t.n++;
+    t.importe += precio;
     t.comision += f.comision;
     t[f.pagoEntrenador] += f.comision;
   }
