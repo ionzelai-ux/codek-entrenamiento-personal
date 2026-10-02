@@ -6,7 +6,7 @@ import { hoyISO } from './logica.js';
 import { renderCalendario, cargarCalendario, accionesCalendario, iniciarArrastre } from './vista-calendario.js';
 import { renderClientes, alBuscar, accionesClientes } from './vista-clientes.js';
 import { renderResumen, accionesResumen } from './vista-resumen.js';
-import { renderComisiones, cargarComisiones, accionesComisiones, alCambiarConfig } from './vista-comisiones.js';
+import { renderComisiones, cargarComisiones, accionesComisiones, alCambiarConfig, alEditarManual, alGuardarManual } from './vista-comisiones.js';
 import { renderAimHarder, accionesAimHarder } from './vista-aimharder.js';
 
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -62,7 +62,7 @@ const GLOBALES = {
   salir: async () => {
     await S.api.cerrarSesion();
     Object.assign(S, { perfil: null, clientes: [], entrenadores: [], cliSel: null, filtroEntr: 'todos' });
-    S.comisiones = { mes: hoyISO().slice(0, 7), config: null, overrides: new Map(), cargando: false, cargado: false };
+    S.comisiones = { mes: hoyISO().slice(0, 7), config: null, overrides: new Map(), libres: [], cargando: false, cargado: false };
     vistaEl.innerHTML = '';
     mostrarLogin();
   },
@@ -79,8 +79,13 @@ document.addEventListener('click', async e => {
 document.addEventListener('input', e => {
   if (e.target.matches('[data-filtro-texto]')) alBuscar(e.target.value);
   if (e.target.matches('[data-cfg]')) alCambiarConfig(e.target);
+  if (e.target.matches('[data-man][data-campo]')) alEditarManual(e.target);   // línea manual de comisiones: recalcula al escribir
 });
 document.addEventListener('change', async e => {
+  if (e.target.matches('[data-man][data-campo]')) {   // al soltar el campo de una línea manual se guarda
+    try { await alGuardarManual(e.target); } catch (err) { toast(err.message, true); }
+    return;
+  }
   if (e.target.id !== 'selEntr') return;
   try { await cambiarFiltroEntr(e.target.value); } catch (err) { toast(err.message, true); }
 });

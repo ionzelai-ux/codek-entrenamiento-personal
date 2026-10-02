@@ -284,13 +284,20 @@ export const DEFAULT_CONFIG_COMISIONES = { comision_codek: 40, comision_externo:
 // (porque piensa declararlo aunque el cliente pagara en mano).
 export const esDeclaradoPorDefecto = metodoPago => metodoPago === 'tarjeta' || metodoPago === 'transferencia';
 
+// Importe sobre el que se aplica el % de comisión, tras los descuentos en cascada (IVA si está declarado y
+// después Seguridad Social si se paga en nómina). Lo comparten los bonos y las líneas manuales.
+function baseTrasDescuentos(importe, declarado, pagoEntrenador, config) {
+  let base = importe;
+  if (declarado) base = base / (1 + (Number(config.iva_pct) || 0) / 100);
+  if (pagoEntrenador === 'nomina') base = base / (1 + (Number(config.ss_pct) || 0) / 100);
+  return base;
+}
+
 // `override` = { declarado, pago_entrenador } guardado a mano para ESE bono (o null si no se ha tocado).
 export function comisionBono(bono, origen, config, override = null) {
   const declarado = override?.declarado ?? esDeclaradoPorDefecto(bono.metodo_pago);
   const pagoEntrenador = override?.pago_entrenador || 'efectivo';
-  let base = Number(bono.precio) || 0;
-  if (declarado) base = base / (1 + (Number(config.iva_pct) || 0) / 100);
-  if (pagoEntrenador === 'nomina') base = base / (1 + (Number(config.ss_pct) || 0) / 100);
+  const base = baseTrasDescuentos(Number(bono.precio) || 0, declarado, pagoEntrenador, config);
   const pct = origen === 'codek' ? Number(config.comision_codek) || 0 : Number(config.comision_externo) || 0;
   // Excluido a mano de la liquidación (circunstancias excepcionales, p. ej. no vino y hubo que contratar a otra
   // persona): no comisiona nada, pero se sigue viendo la fila para poder volver a incluirla.
@@ -319,9 +326,43 @@ export function liquidacionMes(clientes, mes, config, overridesPorBono = {}) {
   }));
 }
 
-// Los bonos excluidos no cuentan (ni en lo facturado, ni en la comisión, ni en `n`): se resumen aparte.
-export function totalesComisiones(filas) {
-  const t = { importe: 0, comision: 0, efectivo: 0, nomina: 0, n: 0, excluidos: 0, importeExcluido: 0 };
+// Ajuste manual de una comisión (bono excluido o línea suelta): importe = clases que ha dado × precio por clase,
+// y de ahí el mismo cálculo en cascada que un bono. `pct` vacío = el del origen (Codek / externo).
+//   l = { clases, precio, pct, origen, declarado, pago_entrenador }
+export function comisionManual(l, config) {
+  const num = x => { const n = Number(x); return Number.isFinite(n) ? n : 0; };   // vacío / null / texto raro → 0
+  const importe = num(l.clases) * num(l.precio);
+  const pctDefecto = l.origen === 'codek' ? num(config.comision_codek) : num(config.comision_externo);
+  const pct = l.pct === null || l.pct === undefined || l.pct === '' ? pctDefecto : num(l.pct);
+  const declarado = !!l.declarado, pagoEntrenador = l.pago_entrenador || 'efectivo';
+  const base = baseTrasDescuentos(importe, declarado, pagoEntrenador, config);
+  return { importe, pct, pctDefecto, declarado, pagoEntrenador, base, comision: base * (pct / 100) };
+}
+
+// Líneas de «Ajustes manuales» de un mes: los bonos excluidos de `filas` (su ajuste se guarda en el override del
+// bono: manual_clases, manual_precio, manual_pct) y las líneas libres de ese mes (`libres`, tabla comisiones_manual).
+export function lineasManualesMes(filas, libres, mes, config, overridesPorBono = {}) {
+  const nombreCli = c => `${c.nombre} ${c.apellidos || ''}`.trim();
+  const deBono = filas.filter(f => f.excluido).map(f => {
+    const ov = overridesPorBono[f.bono.id] || {};
+    return {
+      tipo: 'bono', id: f.bono.id, entrenador_id: f.cliente.entrenador_id, concepto: nombreCli(f.cliente), cliente: f.cliente, bono: f.bono,
+      clases: ov.manual_clases ?? null, precio: ov.manual_precio ?? null, pct_manual: ov.manual_pct ?? null,
+      ...comisionManual({ clases: ov.manual_clases, precio: ov.manual_precio, pct: ov.manual_pct, origen: f.cliente.origen, declarado: f.declarado, pago_entrenador: f.pagoEntrenador }, config),
+    };
+  });
+  const sueltas = (libres || []).filter(l => l.mes === mes).map(l => ({
+    tipo: 'libre', id: l.id, entrenador_id: l.entrenador_id, concepto: l.concepto || '',
+    clases: l.clases ?? null, precio: l.precio ?? null, pct_manual: l.pct ?? null,
+    ...comisionManual({ clases: l.clases, precio: l.precio, pct: l.pct, origen: 'externo', declarado: l.declarado, pago_entrenador: l.pago_entrenador }, config),
+  }));
+  return [...deBono, ...sueltas];
+}
+
+// Los bonos excluidos no cuentan como bono (ni en lo facturado, ni en `n`): su comisión pasa a ser la de su
+// línea manual, que se suma junto a las líneas libres. `lineas` = resultado de lineasManualesMes.
+export function totalesComisiones(filas, lineas = []) {
+  const t = { importe: 0, comision: 0, efectivo: 0, nomina: 0, n: 0, excluidos: 0, importeExcluido: 0, manuales: 0, comisionManual: 0 };
   for (const f of filas) {
     const precio = Number(f.bono.precio) || 0;
     if (f.excluido) { t.excluidos++; t.importeExcluido += precio; continue; }
@@ -329,6 +370,12 @@ export function totalesComisiones(filas) {
     t.importe += precio;
     t.comision += f.comision;
     t[f.pagoEntrenador] += f.comision;
+  }
+  for (const l of lineas) {
+    t.manuales++;
+    t.comisionManual += l.comision;
+    t.comision += l.comision;
+    t[l.pagoEntrenador] += l.comision;
   }
   return t;
 }

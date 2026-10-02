@@ -6,7 +6,7 @@ import {
   solapan, buscarConflictos, generarFechas, repartirCarriles, agrupar, sumar, camposPendientes,
   estadoCobro, facturacionMes,
   comisionBono, esDeclaradoPorDefecto, bonosLiquidablesMes, liquidacionMes, totalesComisiones, agruparComisionesPorEntrenador,
-  entrenadoresConComision, DEFAULT_CONFIG_COMISIONES, tieneLesionActiva,
+  entrenadoresConComision, DEFAULT_CONFIG_COMISIONES, tieneLesionActiva, comisionManual, lineasManualesMes,
   sesionesCambiables, horaNueva, planCambioHorario, diasFijosActualizados, etiquetaMes,
 } from '../js/logica.js';
 
@@ -331,7 +331,63 @@ test('totales: importe, comisión y desglose efectivo/nómina', () => {
     { bono: { precio: 300 }, comision: 120, pagoEntrenador: 'efectivo' },
     { bono: { precio: 200 }, comision: 74, pagoEntrenador: 'nomina' },
   ];
-  assert.deepEqual(totalesComisiones(filas), { importe: 500, comision: 194, efectivo: 120, nomina: 74, n: 2, excluidos: 0, importeExcluido: 0 });
+  assert.deepEqual(totalesComisiones(filas), { importe: 500, comision: 194, efectivo: 120, nomina: 74, n: 2, excluidos: 0, importeExcluido: 0, manuales: 0, comisionManual: 0 });
+});
+
+test('comisión manual: clases × precio por clase, % del origen o el que se escriba, y los mismos descuentos', () => {
+  const cfg = DEFAULT_CONFIG_COMISIONES;
+  // 6 clases × 40 € = 240 €; cliente Codek (40 %), efectivo y sin declarar: 240 × 40 % = 96
+  const a = comisionManual({ clases: 6, precio: 40, origen: 'codek', declarado: false, pago_entrenador: 'efectivo' }, cfg);
+  assert.equal(a.importe, 240);
+  assert.equal(a.pct, 40);
+  assert.equal(a.pctDefecto, 40);
+  assert.equal(a.comision, 96);
+  // el % se puede escribir a mano (aquí 50 %) y deja de usarse el del origen
+  const b = comisionManual({ clases: 6, precio: 40, pct: 50, origen: 'codek' }, cfg);
+  assert.equal(b.pct, 50);
+  assert.equal(b.pctDefecto, 40, 'se sigue conociendo el por defecto');
+  assert.equal(b.comision, 120);
+  // un 0 escrito a mano es un 0, no «vacío»
+  assert.equal(comisionManual({ clases: 6, precio: 40, pct: 0, origen: 'codek' }, cfg).comision, 0);
+  // declarado: 240 ÷ 1,21 = 198,347… × 40 % = 79,338…; y además nómina: ÷ 1,35 = 146,924… × 40 % = 58,769…
+  cerca(comisionManual({ clases: 6, precio: 40, origen: 'codek', declarado: true }, cfg).comision, 79.338843, 'declarado');
+  cerca(comisionManual({ clases: 6, precio: 40, origen: 'codek', declarado: true, pago_entrenador: 'nomina' }, cfg).comision, 58.769513, 'declarado y nómina');
+  // sin origen conocido (línea suelta) se usa el de «externo»; vacío o texto raro = 0, sin romper nada
+  assert.equal(comisionManual({ clases: 2, precio: 50, origen: 'externo' }, cfg).comision, 60);
+  assert.equal(comisionManual({ clases: null, precio: undefined }, cfg).comision, 0);
+  assert.equal(comisionManual({ clases: 'abc', precio: 40 }, cfg).importe, 0);
+});
+
+test('líneas manuales del mes: los bonos excluidos (con sus campos guardados) y las líneas libres de ese mes', () => {
+  const cfg = DEFAULT_CONFIG_COMISIONES;
+  const cl = [{ entrenador_id: 'edu', nombre: 'Natalí', apellidos: '', origen: 'codek', bonos: [
+    { id: 'b1', precio: 336, metodo_pago: 'efectivo', pagado_el: '2026-10-02' },
+    { id: 'b2', precio: 100, metodo_pago: 'efectivo', pagado_el: '2026-10-03' }] }];
+  const ov = { b1: { excluido: true, manual_clases: 6, manual_precio: 40 }, b2: { declarado: true } };
+  const filas = liquidacionMes(cl, '2026-10', cfg, ov);
+  const libres = [
+    { id: 'l1', mes: '2026-10', entrenador_id: 'edu', concepto: 'Clases sueltas', clases: 2, precio: 50, pct: null, declarado: false, pago_entrenador: 'nomina' },
+    { id: 'l2', mes: '2026-09', entrenador_id: 'edu', concepto: 'De otro mes', clases: 9, precio: 99, pct: null, declarado: false, pago_entrenador: 'efectivo' },
+  ];
+  const lineas = lineasManualesMes(filas, libres, '2026-10', cfg, ov);
+  assert.deepEqual(lineas.map(l => [l.tipo, l.id]), [['bono', 'b1'], ['libre', 'l1']], 'solo el excluido y la libre de octubre');
+  assert.equal(lineas[0].concepto, 'Natalí');
+  assert.equal(lineas[0].comision, 96, '6 × 40 € × 40 % (Codek)');
+  assert.equal(lineas[0].pct_manual, null, 'sin % escrito: se ve el por defecto');
+  // libre: 2 × 50 = 100 ÷ 1,35 (nómina) × 60 % (externo) = 44,44…
+  cerca(lineas[1].comision, 44.444444, 'línea suelta con nómina');
+  // un bono excluido sin rellenar todavía no comisiona nada
+  const vacia = lineasManualesMes(filas, [], '2026-10', cfg, { b1: { excluido: true } });
+  assert.equal(vacia[0].comision, 0);
+  // totales: el bono incluido (b2, declarado: 100 ÷ 1,21 × 40 %) + las dos líneas manuales; el excluido no cuenta como bono
+  const t = totalesComisiones(filas, lineas);
+  assert.equal(t.n, 1);
+  assert.equal(t.excluidos, 1);
+  assert.equal(t.manuales, 2);
+  cerca(t.comisionManual, 96 + 44.444444, 'solo lo manual');
+  cerca(t.comision, 100 / 1.21 * 0.4 + 96 + 44.444444, 'comisión total = bono incluido + manuales');
+  cerca(t.efectivo, 100 / 1.21 * 0.4 + 96, 'efectivo');
+  cerca(t.nomina, 44.444444, 'nómina');
 });
 
 test('excluir un bono de la liquidación: no comisiona, y no entra en los totales (se resume aparte)', () => {
@@ -351,7 +407,7 @@ test('excluir un bono de la liquidación: no comisiona, y no entra en los totale
     { bono: { precio: 200 }, comision: 0, pagoEntrenador: 'efectivo', excluido: true },
     { bono: { precio: 100 }, comision: 0, pagoEntrenador: 'nomina', excluido: true },
   ];
-  assert.deepEqual(totalesComisiones(filas), { importe: 300, comision: 120, efectivo: 120, nomina: 0, n: 1, excluidos: 2, importeExcluido: 300 });
+  assert.deepEqual(totalesComisiones(filas), { importe: 300, comision: 120, efectivo: 120, nomina: 0, n: 1, excluidos: 2, importeExcluido: 300, manuales: 0, comisionManual: 0 });
 });
 
 test('liquidación del mes: el override «excluido» llega a la fila y deja la comisión a cero', () => {

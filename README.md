@@ -132,5 +132,9 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   quedar fuera del sistema de comisiones (`perfiles.aplica_comisiones`, `sql/09_comisiones_entrenadores.sql`) sin que
   le afecte al resto de la app: solo desaparece de esta pestaña. Y para casos excepcionales (p. ej. el cliente no vino
   y hubo que contratar a otra persona) cada fila tiene una casilla **Incluir** (`sql/11_comisiones_excluir.sql`):
-  un bono excluido no comisiona, no entra en los totales (se avisa aparte de cuántos y cuánto quedan fuera) y se
-  puede volver a incluir en cualquier momento.
+  al desmarcarla, el bono sale de la liquidación normal y **baja a «Ajustes manuales»** del entrenador
+  (`sql/12_comisiones_manual.sql`), donde se escribe a mano cuántas clases ha dado él y a cuánto cobra cada una:
+  importe = clases × € por clase, % de comisión editable (vacío = el del origen del cliente) y los mismos descuentos
+  de IVA / Seguridad Social con las casillas «Declarado» y «Efectivo/Nómina». Con «↩ Incluir» vuelve a la liquidación
+  normal. Además, «+ Añadir línea manual» crea líneas sueltas (concepto, clases, precio…) para ese entrenador y mes.
+  Todo recalcula al escribir (también con coma decimal) y se guarda al soltar el campo; solo el administrador lo ve.

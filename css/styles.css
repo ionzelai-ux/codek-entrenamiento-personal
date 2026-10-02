@@ -315,9 +315,11 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
 .tabla-com .check { white-space: nowrap; }
 .com-incluir { text-align: center; }
 .com-incluir input { accent-color: var(--red); width: 16px; height: 16px; cursor: pointer; }
-.tabla-com tr.com-excluida td { opacity: .45; }
-.tabla-com tr.com-excluida td.com-incluir, .tabla-com tr.com-excluida td:nth-child(2) { opacity: 1; }
-.tabla-com tr.com-excluida td.num.verde { text-decoration: line-through; }
+.com-man-titulo { margin-top: 20px; }
+.tabla-man .man-in { width: 84px; padding: 6px 8px; font-family: var(--mono); font-size: 13px; text-align: right; }
+.tabla-man .man-concepto { width: 100%; min-width: 190px; text-align: left; font-family: inherit; }
+.tabla-man .man-concepto-td { min-width: 200px; white-space: normal; }
+.tabla-man .com-man-accion { text-align: right; }
 .com-aviso { color: var(--yellow); }
 .com-grupo { margin-bottom: 22px; }
 .com-grupo-title { font-family: var(--display); font-size: 20px; letter-spacing: 2px; display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }

@@ -108,6 +108,13 @@ export async function guardarConfigComisiones(cambios) {
   return comprobar(await sb.from('comisiones_config').upsert({ id: 1, comision_codek, comision_externo, iva_pct, ss_pct }).select().single());
 }
 export async function listarOverridesComisiones() { return comprobar(await sb.from('comisiones_bono').select('*')); }
+// Líneas manuales sueltas de la liquidación (sql/12_comisiones_manual.sql).
+export async function listarLineasManuales() { return comprobar(await sb.from('comisiones_manual').select('*').order('created_at')); }
+export async function crearLineaManual(l) { return comprobar(await sb.from('comisiones_manual').insert(l).select().single()); }
+export async function actualizarLineaManual(id, cambios) {
+  return comprobar(await sb.from('comisiones_manual').update(cambios).eq('id', id).select().single());
+}
+export async function eliminarLineaManual(id) { comprobar(await sb.from('comisiones_manual').delete().eq('id', id)); }
 // Upsert parcial: solo se guarda lo que cambia (ver sql/08_comisiones.sql), el otro campo del bono no se toca.
 export async function guardarOverrideComision(bono_id, cambios) {
   return comprobar(await sb.from('comisiones_bono').upsert({ bono_id, ...cambios }, { onConflict: 'bono_id' }).select().single());

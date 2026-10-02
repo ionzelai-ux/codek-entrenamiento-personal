@@ -15,7 +15,7 @@ export const S = {
   resumenMes: hoyISO().slice(0, 7),    // mes del «Detalle por mes»
   resumenBase: hoyISO().slice(0, 7),   // primer mes de las dos tarjetas de «Facturación prevista»
   comisiones: {                  // liquidación de comisiones (solo admin)
-    mes: hoyISO().slice(0, 7), config: null, overrides: new Map(), cargando: false, cargado: false,
+    mes: hoyISO().slice(0, 7), config: null, overrides: new Map(), libres: [], cargando: false, cargado: false,
   },
   ah: {                          // panel de AimHarder (solo admin)
     fecha: hoyISO(), estado: null, dia: null, error: '', cargando: false,

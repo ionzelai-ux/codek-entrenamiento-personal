@@ -187,10 +187,32 @@ export async function listarOverridesComisiones() {
   if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
   return comisionesBono.map(clonar);
 }
+const comisionesManual = [];
+export async function listarLineasManuales() {
+  if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
+  return comisionesManual.map(clonar);
+}
+export async function crearLineaManual(l) {
+  if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
+  const n = { id: nuevoId(), concepto: '', clases: null, precio: null, pct: null, declarado: false, pago_entrenador: 'efectivo', ...l };
+  comisionesManual.push(n);
+  return clonar(n);
+}
+export async function actualizarLineaManual(id, cambios) {
+  if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
+  const n = comisionesManual.find(x => x.id === id);
+  if (!n) throw new Error('Línea no encontrada');
+  Object.assign(n, cambios);
+  return clonar(n);
+}
+export async function eliminarLineaManual(id) {
+  if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
+  comisionesManual.splice(comisionesManual.findIndex(x => x.id === id), 1);
+}
 export async function guardarOverrideComision(bono_id, cambios) {
   if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
   let o = comisionesBono.find(x => x.bono_id === bono_id);
-  if (!o) { o = { bono_id, declarado: null, pago_entrenador: 'efectivo', excluido: false }; comisionesBono.push(o); }
+  if (!o) { o = { bono_id, declarado: null, pago_entrenador: 'efectivo', excluido: false, manual_clases: null, manual_precio: null, manual_pct: null }; comisionesBono.push(o); }
   Object.assign(o, cambios);
   return clonar(o);
 }
