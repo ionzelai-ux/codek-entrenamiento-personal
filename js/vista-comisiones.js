@@ -1,10 +1,12 @@
-// Liquidación de comisiones de los entrenadores (solo administrador).
-// Los porcentajes y el trato de cada bono (declarado / pago en nómina) se pueden tocar aquí mismo y
-// todo se recalcula al momento, como una hoja de cálculo; se guarda en Supabase para la próxima vez.
-// Un bono se puede excluir de la liquidación normal: baja a «Ajustes manuales», donde se escribe a mano
-// cuántas clases ha dado el entrenador y a qué precio (y, si hace falta, otro % de comisión). También se
-// pueden añadir líneas manuales sueltas.
-import { S, bus, esAdmin, entrenadorDe, nombreCompleto, entrenadorFiltroId } from './store.js';
+// Liquidación de comisiones de los entrenadores.
+// ADMINISTRADOR: los porcentajes y el trato de cada bono (declarado / pago en nómina) se pueden tocar aquí mismo y
+// todo se recalcula al momento, como una hoja de cálculo; se guarda en Supabase para la próxima vez. Un bono se puede
+// excluir de la liquidación normal: baja a «Ajustes manuales», donde se escribe a mano cuántas clases ha dado el
+// entrenador y a qué precio (y, si hace falta, otro % de comisión). También se pueden añadir líneas manuales sueltas.
+// ENTRENADOR: ve la misma pestaña pero solo con SUS bonos cobrados y como una SIMULACIÓN: puede jugar con
+// «declarado», «efectivo / nómina» y los porcentajes para ver cómo salen los números, pero nada se guarda y no ve
+// ni las exclusiones ni los ajustes manuales del administrador (la liquidación real la confirma él).
+import { S, bus, esAdmin, puedeVerComisiones, entrenadorDe, nombreCompleto, entrenadorFiltroId } from './store.js';
 import { esc, fmtEUR, fmtFecha, nombreMes, etiquetaMetodo, toast, dialogo, filtroEntrenadorHTML } from './util.js';
 import {
   hoyISO, primerDiaMes, liquidacionMes, lineasManualesMes, totalesComisiones, entrenadoresConComision,
@@ -12,18 +14,25 @@ import {
 } from './logica.js';
 
 export async function cargarComisiones() {
+  const admin = esAdmin();
+  // El entrenador juega con lo que ya tiene en pantalla: si vuelve a la pestaña no se le borran sus pruebas.
+  if (!admin && S.comisiones.cargado) { bus.repintar(); return; }
   S.comisiones.cargando = true;
   bus.repintar();
   try {
-    const [config, overrides] = await Promise.all([S.api.obtenerConfigComisiones(), S.api.listarOverridesComisiones()]);
-    S.comisiones.config = config || { ...DEFAULT_CONFIG_COMISIONES };
-    S.comisiones.overrides = new Map(overrides.map(o => [o.bono_id, o]));
+    S.comisiones.config = (await S.api.obtenerConfigComisiones()) || { ...DEFAULT_CONFIG_COMISIONES };
   } catch (e) {
-    toast(e.message, true);
+    if (admin) toast(e.message, true);   // un entrenador simplemente parte de los valores por defecto
     if (!S.comisiones.config) S.comisiones.config = { ...DEFAULT_CONFIG_COMISIONES };   // para poder seguir viendo la pantalla
   }
-  // Las líneas manuales van aparte: si aún no se ha ejecutado sql/12, el resto de la pantalla sigue funcionando.
-  try { S.comisiones.libres = await S.api.listarLineasManuales(); } catch (e) { S.comisiones.libres = []; toast(`Ajustes manuales no disponibles: ${e.message}`, true); }
+  if (admin) {
+    try { S.comisiones.overrides = new Map((await S.api.listarOverridesComisiones()).map(o => [o.bono_id, o])); } catch (e) { toast(e.message, true); }
+    // Las líneas manuales van aparte: si aún no se ha ejecutado sql/12, el resto de la pantalla sigue funcionando.
+    try { S.comisiones.libres = await S.api.listarLineasManuales(); } catch (e) { S.comisiones.libres = []; toast(`Ajustes manuales no disponibles: ${e.message}`, true); }
+  } else {
+    S.comisiones.overrides = new Map();   // sus pruebas se quedan solo en pantalla
+    S.comisiones.libres = [];
+  }
   S.comisiones.cargando = false;
   S.comisiones.cargado = true;
   bus.repintar();
@@ -42,15 +51,15 @@ function datos() {
 
 const plural = (n, uno, varios) => (n === 1 ? uno : varios);
 
-const CABECERA_TABLA = `<thead><tr>
-  <th title="Desmarca para pasar este bono a «Ajustes manuales»">Incluir</th><th>Cliente</th><th class="num">Pagado el</th><th>Origen</th><th class="num">Importe</th>
-  <th>Declarado (IVA)</th><th>Se le paga en</th><th class="num">Base</th><th class="num">Comisión</th>
+const cabeceraTabla = () => `<thead><tr>
+  ${esAdmin() ? '<th title="Desmarca para pasar este bono a «Ajustes manuales»">Incluir</th>' : ''}<th>Cliente</th><th class="num">Pagado el</th><th>Origen</th><th class="num">Importe</th>
+  <th>Declarado (IVA)</th><th>${esAdmin() ? 'Se le paga en' : 'Lo cobro en'}</th><th class="num">Base</th><th class="num">Comisión</th>
 </tr></thead>`;
 
 function filaHTML(f) {
   const c = f.cliente, b = f.bono;
   return `<tr>
-    <td class="com-incluir"><input type="checkbox" data-acc="com-incluir" data-bono="${b.id}" checked aria-label="Incluir en la liquidación" title="Incluido en la liquidación. Desmárcalo para ajustarlo a mano"></td>
+    ${esAdmin() ? `<td class="com-incluir"><input type="checkbox" data-acc="com-incluir" data-bono="${b.id}" checked aria-label="Incluir en la liquidación" title="Incluido en la liquidación. Desmárcalo para ajustarlo a mano"></td>` : ''}
     <td>${esc(nombreCompleto(c))}</td>
     <td class="num">${fmtFecha(b.pagado_el)}</td>
     <td><span class="chip ${c.origen === 'codek' ? 'granate' : 'gris'}">${c.origen === 'codek' ? 'CODEK' : 'EXTERNO'}</span> <span class="hint">${f.pct}%</span></td>
@@ -67,8 +76,8 @@ function filaHTML(f) {
 }
 
 const tablaFilasHTML = filas => filas.length
-  ? `<div class="tabla-wrap"><table class="tabla tabla-com">${CABECERA_TABLA}<tbody>${filas.map(filaHTML).join('')}</tbody></table></div>`
-  : '<div class="vacio">Sin bonos en la liquidación normal este mes</div>';
+  ? `<div class="tabla-wrap"><table class="tabla tabla-com">${cabeceraTabla()}<tbody>${filas.map(filaHTML).join('')}</tbody></table></div>`
+  : `<div class="vacio">${esAdmin() ? 'Sin bonos en la liquidación normal este mes' : 'Todavía no hay bonos cobrados este mes'}</div>`;
 
 // ── Ajustes manuales ──────────────────────────────────────────────────────
 // Clave de una línea: «b:<id del bono>» (bono excluido) o «l:<id>» (línea suelta).
@@ -122,7 +131,7 @@ function grupoHTML(e, filas, lineas) {
     <div class="com-grupo-title"><i class="tc" style="background:${e.color || '#888'}"></i>${esc(e.nombre)}
       <span class="com-grupo-total">${fmtEUR(t.comision)}</span></div>
     ${tablaFilasHTML(filas.filter(f => !f.excluido))}
-    ${seccionManualHTML(e.id, lineas)}
+    ${esAdmin() ? seccionManualHTML(e.id, lineas) : ''}
     ${subtotalHTML(t)}
   </div>`;
 }
@@ -158,8 +167,9 @@ function refrescarTabla() {
 function panelConfigHTML(config) {
   const campo = (key, label) => `<label class="cfg-campo"><span>${esc(label)}</span>
     <div class="cfg-input"><input class="form-input" type="number" step="0.1" min="0" max="100" data-cfg="${key}" value="${config[key]}"><span>%</span></div></label>`;
+  const admin = esAdmin();
   return `
-    <div class="section-title">Condiciones de la comisión</div>
+    <div class="section-title">${admin ? 'Condiciones de la comisión' : 'Condiciones pactadas (puedes probar otras)'}</div>
     <div class="cfg-grid">
       ${campo('comision_codek', 'Comisión · cliente Codek')}
       ${campo('comision_externo', 'Comisión · cliente externo')}
@@ -167,18 +177,25 @@ function panelConfigHTML(config) {
       ${campo('ss_pct', 'Seguridad Social si se paga en nómina')}
     </div>
     <div class="cfg-acciones">
-      <button class="btn btn-secondary btn-sm" data-acc="com-guardar-config">💾 Guardar condiciones</button>
-      <span class="hint">Se recalcula al momento; guarda para que se recuerde la próxima vez.</span>
+      ${admin ? `<button class="btn btn-secondary btn-sm" data-acc="com-guardar-config">💾 Guardar condiciones</button>
+        <span class="hint">Se recalcula al momento; guarda para que se recuerde la próxima vez.</span>`
+        : '<span class="hint">Se recalcula al momento. Es solo una prueba: no se guarda.</span>'}
     </div>
     <p class="hint" style="margin-top:6px">Fórmula: importe del bono → si está declarado, se divide entre 1&nbsp;+&nbsp;IVA/100 → si se paga en nómina, se
       divide (sobre lo anterior) entre 1&nbsp;+&nbsp;Seg. Social/100 → sobre esa base se aplica el % de comisión según el origen del cliente.</p>`;
 }
 
+// Aviso fijo del entrenador: es una simulación, nada se guarda.
+const avisoSimulacionHTML = () => `<div class="alert alert-info alert-flex com-simulacion"><span>🧮 <b>SIMULACIÓN</b> — Aquí ves tus bonos cobrados de cada mes y la comisión que saldría con las condiciones pactadas.
+  Cambia «declarado», «efectivo / nómina» o los porcentajes para ver cómo salen los números: <b>nada de lo que cambies se guarda</b> ni modifica tu liquidación, que confirma el administrador.</span>
+  <button class="btn btn-sm btn-secondary" data-acc="com-reset" title="Vuelve a los valores pactados y a lo que marcan los bonos">↺ Restablecer</button></div>`;
+
 export function renderComisiones(el) {
-  if (!esAdmin()) { el.innerHTML = ''; return; }
+  if (!puedeVerComisiones()) { el.innerHTML = ''; return; }
   if (!S.comisiones.cargado) { el.innerHTML = '<div class="vacio">Cargando…</div>'; return; }
+  const admin = esAdmin();
   el.innerHTML = `
-    <div class="resumen-filtro">${filtroEntrenadorHTML(S.entrenadores, S.filtroEntr)}</div>
+    ${admin ? `<div class="resumen-filtro">${filtroEntrenadorHTML(S.entrenadores, S.filtroEntr)}</div>` : avisoSimulacionHTML()}
     ${panelConfigHTML(S.comisiones.config || DEFAULT_CONFIG_COMISIONES)}
     <div class="cal-nav" style="margin:22px 0 18px">
       <button class="cal-btn" data-acc="com-mes-prev" aria-label="Mes anterior">◀</button>
@@ -199,6 +216,7 @@ async function guardarOverride(bonoId, cambios) {
   const actual = S.comisiones.overrides.get(bonoId) || { bono_id: bonoId, declarado: null, pago_entrenador: 'efectivo', excluido: false };
   S.comisiones.overrides.set(bonoId, { ...actual, ...cambios });   // recalcula al momento
   refrescarTabla();
+  if (!esAdmin()) return;   // las pruebas de un entrenador se quedan en pantalla: nunca se guardan
   try {
     S.comisiones.overrides.set(bonoId, await S.api.guardarOverrideComision(bonoId, cambios));
   } catch (e) {
@@ -287,7 +305,10 @@ export const accionesComisiones = {
     S.comisiones.libres = S.comisiones.libres.filter(x => x.id !== id);
     refrescarTabla();
   },
+  // Entrenador: vuelve a los valores pactados y a lo que marcan los bonos (borra solo sus pruebas)
+  'com-reset': async () => { S.comisiones.cargado = false; await cargarComisiones(); toast('Pruebas restablecidas'); },
   'com-guardar-config': async () => {
+    if (!esAdmin()) return;
     try {
       S.comisiones.config = await S.api.guardarConfigComisiones(S.comisiones.config || DEFAULT_CONFIG_COMISIONES);
       toast('Condiciones guardadas');

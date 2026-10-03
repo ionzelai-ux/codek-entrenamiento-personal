@@ -142,7 +142,7 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
 - **Filtro por entrenador** (solo administrador): botones «Todos · Eduardo · Jesús» en Clientes, Calendario, Resumen y
   Comisiones, sincronizados con el desplegable de la cabecera. En el Resumen filtran todo (tarjetas, detalle por mes,
   por entrenador y por origen).
-- **Comisiones** (pestaña solo del administrador; `sql/08_comisiones.sql`): liquidación mensual de lo que se le paga
+- **Comisiones** (`sql/08_comisiones.sql`; la gestiona el administrador y cada entrenador tiene una versión de solo simulación, ver más abajo): liquidación mensual de lo que se le paga
   a cada entrenador, sobre los bonos que el administrador confirmó como pagados ese mes. Por cada bono:
   importe del bono → si se trata como *declarado* (por defecto, tarjeta/transferencia; se puede forzar a mano) se
   divide entre 1 + IVA/100 → si a el entrenador se le paga en *nómina* (elegible por bono) se divide otra vez, sobre
@@ -158,3 +158,8 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   de IVA / Seguridad Social con las casillas «Declarado» y «Efectivo/Nómina». Con «↩ Incluir» vuelve a la liquidación
   normal. Además, «+ Añadir línea manual» crea líneas sueltas (concepto, clases, precio…) para ese entrenador y mes.
   Todo recalcula al escribir (también con coma decimal) y se guarda al soltar el campo; solo el administrador lo ve.
+  **Pestaña de comisiones del entrenador** (`sql/14_comisiones_entrenadores_ven.sql`): cada entrenador que participa en el sistema
+  de comisiones (`aplica_comisiones`, no Jesús por ahora) tiene su pestaña, con SOLO sus bonos cobrados y como una **simulación**:
+  puede jugar con «declarado», «efectivo / nómina» y los porcentajes para ver cómo salen los números, pero nada se guarda (se queda
+  en pantalla; «↺ Restablecer» lo borra) y no ve las exclusiones ni los ajustes manuales del administrador. Los porcentajes de
+  partida son los guardados por el administrador (los entrenadores pueden leerlos, no cambiarlos). Seguridad Social por defecto: 32,5 %.

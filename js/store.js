@@ -30,6 +30,9 @@ export const bus = {
 };
 
 export const esAdmin = () => S.perfil?.rol === 'admin';
+// La pestaña de comisiones la ve el administrador y cada entrenador que participa en el sistema de comisiones
+// (perfiles.aplica_comisiones, true por defecto). Un entrenador solo ve lo suyo.
+export const puedeVerComisiones = () => esAdmin() || (S.perfil?.rol === 'entrenador' && S.perfil?.aplica_comisiones !== false);
 export const entrenadorDe = id => S.entrenadores.find(e => e.id === id) || (S.perfil?.id === id ? S.perfil : null);
 export const nombreCompleto = c => `${c.nombre} ${c.apellidos || ''}`.trim();
 export const clienteDe = id => S.clientes.find(c => c.id === id);

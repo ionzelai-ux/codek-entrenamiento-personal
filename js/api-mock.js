@@ -206,8 +206,8 @@ export async function eliminarBono(id) {
 const SOLO_ADMIN_COMISION = 'Solo el administrador puede ver las comisiones';
 let comisionesConfig = { ...DEFAULT_CONFIG_COMISIONES };
 const comisionesBono = [];
+// Como la RLS real (sql/14): todos pueden LEER los porcentajes; solo el administrador puede cambiarlos.
 export async function obtenerConfigComisiones() {
-  if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
   return clonar(comisionesConfig);
 }
 export async function guardarConfigComisiones(cambios) {

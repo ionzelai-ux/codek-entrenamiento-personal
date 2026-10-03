@@ -436,7 +436,7 @@ export function etiquetaMes(mes, hoy = hoyISO()) {
 //   · Si a el entrenador se le va a pagar por nómina, se hace la misma división con el % de Seguridad Social,
 //     sobre lo que quede tras el paso anterior (en cascada, no sobre el importe original).
 //   · El % de comisión se aplica al final, sobre la base ya reducida.
-export const DEFAULT_CONFIG_COMISIONES = { comision_codek: 40, comision_externo: 60, iva_pct: 21, ss_pct: 35 };
+export const DEFAULT_CONFIG_COMISIONES = { comision_codek: 40, comision_externo: 60, iva_pct: 21, ss_pct: 32.5 };
 
 // Por defecto se considera "declarado" (tarjeta o transferencia) salvo que se indique lo contrario a mano;
 // un pago en efectivo empieza como "no declarado", pero Jon puede marcarlo como declarado igualmente

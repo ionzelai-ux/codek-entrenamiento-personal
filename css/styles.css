@@ -342,6 +342,8 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
 .rev-inc li.rev-alta { border-color: #ff6b6b; } .rev-inc li.rev-media { border-color: var(--yellow); } .rev-inc li.rev-info { border-color: var(--blue-light); color: var(--muted); }
 .bono-sin { color: #ff6b6b; border-bottom-color: #ff6b6b; }
 .cw-aviso { color: #ff6b6b; font-weight: 700; }
+.com-simulacion { margin-bottom: 20px; font-size: 12px; line-height: 1.6; }
+.com-simulacion b { color: var(--text); }
 .com-man-titulo { margin-top: 20px; }
 .tabla-man .man-in { width: 84px; padding: 6px 8px; font-family: var(--mono); font-size: 13px; text-align: right; }
 .tabla-man .man-concepto { width: 100%; min-width: 190px; text-align: left; font-family: inherit; }

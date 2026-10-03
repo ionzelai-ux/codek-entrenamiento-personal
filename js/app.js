@@ -1,6 +1,6 @@
 // Arranque: login, navegación entre vistas y despacho de acciones (data-acc).
 import { SUPABASE_ANON_KEY } from './config.js';
-import { S, bus, esAdmin, clienteDe } from './store.js';
+import { S, bus, esAdmin, puedeVerComisiones, clienteDe } from './store.js';
 import { esc, toast } from './util.js';
 import { hoyISO } from './logica.js';
 import { renderCalendario, cargarCalendario, accionesCalendario, iniciarArrastre } from './vista-calendario.js';
@@ -14,7 +14,7 @@ const $ = id => document.getElementById(id);
 const vistaEl = $('vista');
 
 const VISTAS = { calendario: renderCalendario, clientes: renderClientes, resumen: renderResumen, comisiones: renderComisiones, aimharder: renderAimHarder };
-const SOLO_ADMIN = ['resumen', 'comisiones', 'aimharder'];
+const SOLO_ADMIN = ['resumen', 'aimharder'];   // «comisiones» la ve también cada entrenador (solo lo suyo): ver puedeVerComisiones
 const pintar = () => VISTAS[S.vista](vistaEl);
 
 bus.repintar = pintar;
@@ -26,7 +26,8 @@ bus.recargar = async () => {
 // ── Cabecera ──────────────────────────────────────────────────────────────
 function pintarCabecera() {
   const admin = esAdmin();
-  const tabs = [['calendario', 'Calendario'], ['clientes', 'Clientes'], ...(admin ? [['resumen', 'Resumen'], ['comisiones', 'Comisiones'], ['aimharder', 'AimHarder']] : [])];
+  const tabs = [['calendario', 'Calendario'], ['clientes', 'Clientes'], ...(admin ? [['resumen', 'Resumen']] : []),
+    ...(puedeVerComisiones() ? [['comisiones', 'Comisiones']] : []), ...(admin ? [['aimharder', 'AimHarder']] : [])];
   $('nav').innerHTML = tabs.map(([v, l]) =>
     `<button class="nav-tab ${S.vista === v ? 'active' : ''}" data-acc="vista" data-v="${v}">${l}</button>`).join('');
   const selector = admin && S.vista !== 'aimharder'
@@ -53,6 +54,7 @@ const GLOBALES = {
   'filtro-entr': t => cambiarFiltroEntr(t.dataset.v),
   vista: t => {
     if (SOLO_ADMIN.includes(t.dataset.v) && !esAdmin()) return;
+    if (t.dataset.v === 'comisiones' && !puedeVerComisiones()) return;
     S.vista = t.dataset.v;
     pintarCabecera();
     if (S.vista === 'calendario') return cargarCalendario();

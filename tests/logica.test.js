@@ -10,6 +10,9 @@ import {
   consumoPorBono, precioSesionEstimado, incidenciasCliente, solapesEntrenadores, revisionDatos, deudaDiferida, planCobroSesiones,
   sesionesCambiables, horaNueva, planCambioHorario, diasFijosActualizados, etiquetaMes,
 } from '../js/logica.js';
+// Los ejemplos de la fórmula (82,28 €, 176,31 €…) se calcularon con el 35 % de Seguridad Social: se fija aquí para que sigan siendo exactos
+// aunque cambie el valor por defecto (ahora 32,5; hay un test aparte para eso).
+const CFG_35 = { ...DEFAULT_CONFIG_COMISIONES, ss_pct: 35 };
 
 test('fechas: lunes, día de la semana y meses', () => {
   assert.equal(diaSemana('2026-09-20'), 7);          // domingo
@@ -444,6 +447,14 @@ test('revisión: un cliente que paga después no sale como incoherente; una soli
 // ── Comisiones de los entrenadores ──────────────────────────────────────────
 const cerca = (a, b, msg) => assert.ok(Math.abs(a - b) < 0.005, `${msg}: ${a} ≈ ${b}`);
 
+test('condiciones por defecto: 40 % Codek, 60 % externo, 21 % IVA y 32,5 % de Seguridad Social', () => {
+  assert.deepEqual(DEFAULT_CONFIG_COMISIONES, { comision_codek: 40, comision_externo: 60, iva_pct: 21, ss_pct: 32.5 });
+  // con el valor por defecto: 336 € declarado y en nómina, cliente Codek → 336 ÷ 1,21 ÷ 1,325 × 40 % = 83,8…
+  const r = comisionBono({ precio: 336, metodo_pago: 'tarjeta' }, 'codek', DEFAULT_CONFIG_COMISIONES, { pago_entrenador: 'nomina' });
+  cerca(r.comision, 336 / 1.21 / 1.325 * 0.4, 'con el 32,5 %');
+  cerca(r.comision, 83.8332, 'valor numérico');
+});
+
 test('declarado por defecto: tarjeta y transferencia sí, efectivo no', () => {
   assert.equal(esDeclaradoPorDefecto('tarjeta'), true);
   assert.equal(esDeclaradoPorDefecto('transferencia'), true);
@@ -453,7 +464,7 @@ test('declarado por defecto: tarjeta y transferencia sí, efectivo no', () => {
 
 test('comisión de un bono: cliente Codek con tarjeta, pagado en nómina (ejemplo de Jon)', () => {
   // 336 € ÷ 1,21 = 277,685950... ÷ 1,35 = 205,693296... × 40% = 82,277318...
-  const r = comisionBono({ precio: 336, metodo_pago: 'tarjeta' }, 'codek', DEFAULT_CONFIG_COMISIONES, { pago_entrenador: 'nomina' });
+  const r = comisionBono({ precio: 336, metodo_pago: 'tarjeta' }, 'codek', CFG_35, { pago_entrenador: 'nomina' });
   assert.equal(r.declarado, true);
   assert.equal(r.pagoEntrenador, 'nomina');
   assert.equal(r.pct, 40);
@@ -463,14 +474,14 @@ test('comisión de un bono: cliente Codek con tarjeta, pagado en nómina (ejempl
 
 test('comisión de un bono: mismo caso pero pagado en efectivo (sin descuento de Seguridad Social)', () => {
   // 336 € ÷ 1,21 = 277,685950... × 40% = 111,074380...
-  const r = comisionBono({ precio: 336, metodo_pago: 'tarjeta' }, 'codek', DEFAULT_CONFIG_COMISIONES);
+  const r = comisionBono({ precio: 336, metodo_pago: 'tarjeta' }, 'codek', CFG_35);
   assert.equal(r.pagoEntrenador, 'efectivo', 'sin override, por defecto efectivo');
   cerca(r.base, 277.685950, 'base tras IVA, sin Seguridad Social');
   cerca(r.comision, 111.074380, 'comisión');
 });
 
 test('comisión de un bono: cliente externo en efectivo, sin declarar (comisión más alta, sin descuentos)', () => {
-  const r = comisionBono({ precio: 480, metodo_pago: 'efectivo' }, 'externo', DEFAULT_CONFIG_COMISIONES);
+  const r = comisionBono({ precio: 480, metodo_pago: 'efectivo' }, 'externo', CFG_35);
   assert.equal(r.declarado, false);
   assert.equal(r.pct, 60);
   assert.equal(r.base, 480, 'sin IVA porque no está declarado');
@@ -479,7 +490,7 @@ test('comisión de un bono: cliente externo en efectivo, sin declarar (comisión
 
 test('comisión de un bono: Jon puede tratar un pago en efectivo como declarado aunque el método real sea efectivo', () => {
   // 480 € ÷ 1,21 = 396,694214... × 60% = 238,016528...
-  const r = comisionBono({ precio: 480, metodo_pago: 'efectivo' }, 'externo', DEFAULT_CONFIG_COMISIONES, { declarado: true });
+  const r = comisionBono({ precio: 480, metodo_pago: 'efectivo' }, 'externo', CFG_35, { declarado: true });
   assert.equal(r.declarado, true);
   cerca(r.base, 396.694214, 'base tras IVA aunque el método real sea efectivo');
   cerca(r.comision, 238.016528, 'comisión');
@@ -498,9 +509,9 @@ test('liquidación de un mes: aplica los overrides guardados por bono y dedup po
   const cl = [
     { entrenador_id: 'edu', nombre: 'Pablo', apellidos: '', origen: 'externo', bonos: [{ id: 'b1', precio: 480, metodo_pago: 'efectivo', pagado_el: '2026-09-18' }] },
   ];
-  const sinOverride = liquidacionMes(cl, '2026-09', DEFAULT_CONFIG_COMISIONES);
+  const sinOverride = liquidacionMes(cl, '2026-09', CFG_35);
   assert.equal(sinOverride[0].comision, 288);
-  const conOverride = liquidacionMes(cl, '2026-09', DEFAULT_CONFIG_COMISIONES, { b1: { declarado: true, pago_entrenador: 'nomina' } });
+  const conOverride = liquidacionMes(cl, '2026-09', CFG_35, { b1: { declarado: true, pago_entrenador: 'nomina' } });
   // 480 ÷ 1,21 = 396,694214... ÷ 1,35 = 293,847566... × 60% = 176,308539...
   cerca(conOverride[0].comision, 176.308539, 'con declarado + nómina');
 });
@@ -514,7 +525,7 @@ test('totales: importe, comisión y desglose efectivo/nómina', () => {
 });
 
 test('comisión manual: clases × precio por clase, % del origen o el que se escriba, y los mismos descuentos', () => {
-  const cfg = DEFAULT_CONFIG_COMISIONES;
+  const cfg = CFG_35;
   // 6 clases × 40 € = 240 €; cliente Codek (40 %), efectivo y sin declarar: 240 × 40 % = 96
   const a = comisionManual({ clases: 6, precio: 40, origen: 'codek', declarado: false, pago_entrenador: 'efectivo' }, cfg);
   assert.equal(a.importe, 240);
@@ -538,7 +549,7 @@ test('comisión manual: clases × precio por clase, % del origen o el que se esc
 });
 
 test('líneas manuales del mes: los bonos excluidos (con sus campos guardados) y las líneas libres de ese mes', () => {
-  const cfg = DEFAULT_CONFIG_COMISIONES;
+  const cfg = CFG_35;
   const cl = [{ entrenador_id: 'edu', nombre: 'Nora', apellidos: '', origen: 'codek', bonos: [
     { id: 'b1', precio: 336, metodo_pago: 'efectivo', pagado_el: '2026-10-02' },
     { id: 'b2', precio: 100, metodo_pago: 'efectivo', pagado_el: '2026-10-03' }] }];
@@ -571,15 +582,15 @@ test('líneas manuales del mes: los bonos excluidos (con sus campos guardados) y
 
 test('excluir un bono de la liquidación: no comisiona, y no entra en los totales (se resume aparte)', () => {
   const bono = { precio: 480, metodo_pago: 'efectivo' };
-  const normal = comisionBono(bono, 'externo', DEFAULT_CONFIG_COMISIONES);
-  const excl = comisionBono(bono, 'externo', DEFAULT_CONFIG_COMISIONES, { excluido: true });
+  const normal = comisionBono(bono, 'externo', CFG_35);
+  const excl = comisionBono(bono, 'externo', CFG_35, { excluido: true });
   assert.equal(normal.excluido, false);
   assert.equal(normal.comision, 288);
   assert.equal(excl.excluido, true);
   assert.equal(excl.comision, 0);
   assert.equal(excl.base, 480, 'se sigue viendo la base para poder volver a incluirlo');
   // volver a incluirlo (excluido: false) lo deja como antes; el resto de ajustes se respeta
-  assert.equal(comisionBono(bono, 'externo', DEFAULT_CONFIG_COMISIONES, { excluido: false, pago_entrenador: 'nomina' }).excluido, false);
+  assert.equal(comisionBono(bono, 'externo', CFG_35, { excluido: false, pago_entrenador: 'nomina' }).excluido, false);
 
   const filas = [
     { bono: { precio: 300 }, comision: 120, pagoEntrenador: 'efectivo', excluido: false },
@@ -592,7 +603,7 @@ test('excluir un bono de la liquidación: no comisiona, y no entra en los totale
 test('liquidación del mes: el override «excluido» llega a la fila y deja la comisión a cero', () => {
   const cl = [{ entrenador_id: 'edu', nombre: 'Ana', apellidos: '', origen: 'codek', bonos: [
     { id: 'b1', precio: 336, metodo_pago: 'tarjeta', pagado_el: '2026-10-02' }, { id: 'b2', precio: 100, metodo_pago: 'efectivo', pagado_el: '2026-10-03' }] }];
-  const filas = liquidacionMes(cl, '2026-10', DEFAULT_CONFIG_COMISIONES, { b1: { excluido: true } });
+  const filas = liquidacionMes(cl, '2026-10', CFG_35, { b1: { excluido: true } });
   assert.deepEqual(filas.map(f => [f.bono.id, f.excluido, f.comision > 0]), [['b1', true, false], ['b2', false, true]]);
   assert.equal(totalesComisiones(filas).n, 1);
 });
