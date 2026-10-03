@@ -17,12 +17,12 @@ const ESTADO = { pagado: ['verde', 'PAGADO'], pendiente: ['pendiente', 'PENDIENT
 
 // Lo que deben los clientes que entrenan y pagan después (no depende del mes: es el saldo de ahora mismo).
 function deudasHTML(clientes) {
-  const filas = clientes.filter(c => c.activo).map(c => ({ c, d: deudaDiferida(c) })).filter(x => x.d?.n);
+  const filas = clientes.filter(c => c.activo).map(c => ({ c, d: deudaDiferida(c) })).filter(x => x.d?.debe);
   if (!filas.length) return '';
   const total = filas.reduce((t, x) => t + (x.d.importe || 0), 0), sinTarifa = filas.filter(x => x.d.importe === null).length;
   const cuerpo = filas.sort((a, b) => nombreCompleto(a.c).localeCompare(nombreCompleto(b.c), 'es')).map(({ c, d }) => {
     const e = entrenadorDe(c.entrenador_id);
-    return `<tr><td>${esc(nombreCompleto(c))}${e ? ` <span class="prev-entr" style="color:${e.color}">${esc(e.nombre)}</span>` : ''}</td>
+    return `<tr><td>${esc(nombreCompleto(c))}${e ? ` <span class="prev-entr" style="color:${e.color}">${esc(e.nombre)}</span>` : ''}${d.modo === 'cuenta' ? ' <span class="hint">(a cuenta)</span>' : ''}</td>
       <td class="num">${d.n}</td><td class="num">${d.tarifa === null ? '—' : fmtEUR(d.tarifa)}</td>
       <td class="num amarillo"><b>${d.importe === null ? 'sin tarifa' : fmtEUR(d.importe)}</b></td></tr>`;
   }).join('');
@@ -31,7 +31,8 @@ function deudasHTML(clientes) {
       <tbody>${cuerpo}</tbody>
       <tfoot><tr><td><b>Total</b></td><td class="num">${filas.reduce((t, x) => t + x.d.n, 0)}</td><td></td>
         <td class="num amarillo"><b>${fmtEUR(total)}</b>${sinTarifa ? ` <span class="hint">(+ ${sinTarifa} sin tarifa)</span>` : ''}</td></tr></tfoot></table></div>
-    <p class="hint" style="margin-bottom:26px">Sesiones hechas que aún no se han cobrado. Se cobran desde la ficha del cliente («Marcar como cobradas»); entonces pasan a «Cobrado».</p>`;
+    <p class="hint" style="margin-bottom:26px">Lo que falta por cobrar: por sesión, las sesiones hechas sin cobrar × su tarifa; a cuenta, sesiones hechas × tarifa − lo ya pagado. Se apunta desde la ficha del cliente
+      («Marcar como cobradas» o «Pago recibido»); entonces pasa a «Cobrado».</p>`;
 }
 
 // Tarjeta de un mes: total previsto, reparto por estado y cada bono con su fecha de pago.

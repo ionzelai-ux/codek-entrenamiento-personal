@@ -16,7 +16,7 @@ let actual = null;
 
 function cliente(datos) {
   const c = { id: nuevoId(), apellidos: '', telefono: '', email: '', fecha_nacimiento: null, notas: '', activo: true,
-    pot_sesiones_bono: null, pot_veces_semana: null, pot_precio: null, dias_fijos: [], pago_diferido: 'no', tarifa_sesion: null, ...datos };
+    pot_sesiones_bono: null, pot_veces_semana: null, pot_precio: null, dias_fijos: [], pago_diferido: 'no', pago_diferido_modo: 'sesion', tarifa_sesion: null, ...datos };
   clientes.push(c);
   return c;
 }
@@ -60,6 +60,11 @@ function sesion(c, fecha, hora, estado = 'reservada') {
     pago_diferido: 'aprobado', tarifa_sesion: 35 });
   [-18, -15, -12, -9, -5].forEach(n => sesion(sofia, addDias(lun, n), '09:00', 'hecha'));
   sesion(sofia, addDias(lun, 8), '09:00');
+  // Paga «a cuenta» (se turnan los entrenadores): 5 hechas a 54 € = 270 €, y ya ha pagado 108 € → debe 162 €
+  const nora = cliente({ entrenador_id: 'p-edu', nombre: 'Nora', apellidos: 'Demo A Cuenta', estado: 'efectivo', origen: 'codek', telefono: '600 000 008', lesiones: 'Ninguna',
+    pago_diferido: 'aprobado', pago_diferido_modo: 'cuenta', tarifa_sesion: 54 });
+  [-16, -13, -11, -8, -4].forEach(n => sesion(nora, addDias(lun, n), '10:00', 'hecha'));
+  bono(nora, 2, 108, addDias(lun, -12), addDias(lun, -12), 'tarjeta', addDias(lun, -12));
   // Eduardo pide que entrene y pague después; el administrador todavía no lo ha aprobado
   const teo = cliente({ entrenador_id: 'p-edu', nombre: 'Teo', apellidos: 'Demo Solicitud', estado: 'efectivo', origen: 'codek', telefono: '600 000 007', lesiones: 'Ninguna',
     pago_diferido: 'solicitado', tarifa_sesion: 30 });
@@ -157,6 +162,9 @@ export async function listarClientes() {
 // Como el disparador de la base de datos (sql/13): solo el administrador aprueba un pago diferido y toca uno aprobado.
 function controlPagoDiferido(antes, campos) {
   if (actual.rol === 'admin') return;
+  if ('pago_diferido_modo' in campos && (campos.pago_diferido_modo ?? 'sesion') !== (antes?.pago_diferido_modo ?? 'sesion')) {
+    throw new Error('Solo el administrador puede cambiar la modalidad del pago diferido');
+  }
   if ('pago_diferido' in campos || 'tarifa_sesion' in campos) {
     const nuevo = campos.pago_diferido ?? antes?.pago_diferido ?? 'no';
     if (antes?.pago_diferido === 'aprobado' && (nuevo !== 'aprobado' || ('tarifa_sesion' in campos && campos.tarifa_sesion !== antes.tarifa_sesion))) {
@@ -215,14 +223,15 @@ export async function guardarConfigComisiones(cambios) {
   Object.assign(comisionesConfig, cambios);
   return clonar(comisionesConfig);
 }
+// Como la RLS real (sql/15): un entrenador LEE solo lo de sus propios bonos y sus propios ajustes; escribir es del administrador.
 export async function listarOverridesComisiones() {
-  if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
-  return comisionesBono.map(clonar);
+  if (actual.rol === 'admin') return comisionesBono.map(clonar);
+  const ids = idsVisibles();
+  return comisionesBono.filter(o => { const b = bonos.find(x => x.id === o.bono_id); return b && ids.has(b.cliente_id); }).map(clonar);
 }
 const comisionesManual = [];
 export async function listarLineasManuales() {
-  if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
-  return comisionesManual.map(clonar);
+  return comisionesManual.filter(l => actual.rol === 'admin' || l.entrenador_id === actual.id).map(clonar);
 }
 export async function crearLineaManual(l) {
   if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);

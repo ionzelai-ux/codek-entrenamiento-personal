@@ -7,7 +7,7 @@ import {
   estadoCobro, facturacionMes,
   comisionBono, esDeclaradoPorDefecto, bonosLiquidablesMes, liquidacionMes, totalesComisiones, agruparComisionesPorEntrenador,
   entrenadoresConComision, DEFAULT_CONFIG_COMISIONES, tieneLesionActiva, comisionManual, lineasManualesMes,
-  consumoPorBono, precioSesionEstimado, incidenciasCliente, solapesEntrenadores, revisionDatos, deudaDiferida, planCobroSesiones,
+  consumoPorBono, precioSesionEstimado, incidenciasCliente, solapesEntrenadores, revisionDatos, deudaDiferida, planCobroSesiones, planPagoRecibido, modoDiferido,
   sesionesCambiables, horaNueva, planCambioHorario, diasFijosActualizados, etiquetaMes,
 } from '../js/logica.js';
 // Los ejemplos de la fórmula (82,28 €, 176,31 €…) se calcularon con el 35 % de Seguridad Social: se fija aquí para que sigan siendo exactos
@@ -422,6 +422,69 @@ test('info pendiente: quien paga después (aprobado) no necesita bono, pero uno 
   assert.deepEqual(camposPendientes(ficha), ['bono']);
   assert.deepEqual(camposPendientes({ ...ficha, pago_diferido: 'aprobado' }), []);
   assert.deepEqual(camposPendientes({ ...ficha, pago_diferido: 'solicitado' }), ['bono']);
+});
+
+// ── Pago «a cuenta» (sin cuadrar con sesiones concretas) ─────────────────────
+// 5 hechas a 54 € y 108 € ya pagados (el pago que ya había hecho)
+const clienteACuenta = (extra = {}) => ({
+  id: 'cta', nombre: 'Nora', apellidos: 'Ejemplo', estado: 'efectivo', activo: true, entrenador_id: 'edu',
+  pago_diferido: 'aprobado', pago_diferido_modo: 'cuenta', tarifa_sesion: 54,
+  bonos: [{ id: 'p1', sesiones: 2, precio: 108, fecha_pago: '2026-09-18', pagado_el: '2026-09-18', tipo: 'bono', metodo_pago: 'tarjeta' }],
+  sesiones: ['07', '08', '11', '17', '18'].map(d => sx('c' + d, `2026-09-${d}`, '10:00')), ...extra,
+});
+
+test('a cuenta: debe (sesiones hechas × tarifa) − lo pagado, en euros y sin cuadrar sesiones', () => {
+  const d = deudaDiferida(clienteACuenta(), AHORA_REV);
+  assert.equal(d.modo, 'cuenta');
+  assert.deepEqual([d.n, d.valor, d.pagado, d.importe, d.aFavor, d.debe], [5, 270, 108, 162, 0, true]);
+  assert.deepEqual(d.pendientes, [], 'no hay sesiones «por cobrar» concretas');
+  // un pago recibido de 100 € (cobro de 0 sesiones): ya no hace falta que cuadre con nada
+  const plan = planPagoRecibido(clienteACuenta(), { importe: '100', fecha: '2026-10-03', metodo: 'efectivo' });
+  assert.deepEqual(plan, { cliente_id: 'cta', sesiones: 0, precio: 100, fecha_pago: '2026-10-03', fecha_inicio: '2026-10-03', metodo_pago: 'efectivo', pagado_el: '2026-10-03', tipo: 'cobro' });
+  const tras = clienteACuenta({ bonos: [...clienteACuenta().bonos, { id: 'p2', ...plan }] });
+  const d2 = deudaDiferida(tras, AHORA_REV);
+  assert.deepEqual([d2.pagado, d2.importe, d2.debe], [208, 62, true]);
+  // paga de más → saldo a favor, y ya no debe nada
+  const d3 = deudaDiferida(clienteACuenta({ bonos: [{ id: 'x', sesiones: 0, precio: 300, pagado_el: '2026-10-03', tipo: 'cobro' }] }), AHORA_REV);
+  assert.deepEqual([d3.importe, d3.aFavor, d3.debe], [0, 30, false]);
+  // un pago exacto: al día
+  const d4 = deudaDiferida(clienteACuenta({ bonos: [{ id: 'x', sesiones: 0, precio: 270, pagado_el: '2026-10-03', tipo: 'cobro' }] }), AHORA_REV);
+  assert.deepEqual([d4.importe, d4.aFavor, d4.debe], [0, 0, false]);
+  // lo que no está confirmado como pagado no cuenta; con comas y decimales
+  assert.equal(deudaDiferida(clienteACuenta({ bonos: [{ id: 'y', sesiones: 0, precio: 500, tipo: 'cobro' }] }), AHORA_REV).pagado, 0);
+  assert.equal(planPagoRecibido(clienteACuenta(), { importe: '37,5', fecha: '2026-10-03', metodo: 'efectivo' }).precio, 37.5);
+});
+
+test('a cuenta: sin tarifa no hay importe; importes inválidos no generan pago; la modalidad por defecto es «sesion»', () => {
+  const sin = deudaDiferida(clienteACuenta({ tarifa_sesion: null, bonos: [] }), AHORA_REV);
+  assert.deepEqual([sin.valor, sin.importe, sin.debe], [null, null, true], 'hay sesiones hechas y nada pagado');
+  assert.equal(deudaDiferida(clienteACuenta({ tarifa_sesion: null }), AHORA_REV).debe, false, 'con algo pagado y sin tarifa no se puede afirmar que deba');
+  for (const importe of ['', '0', '-5', 'abc', null, undefined]) assert.equal(planPagoRecibido(clienteACuenta(), { importe, fecha: '2026-10-03', metodo: 'efectivo' }), null, `importe ${importe}`);
+  assert.equal(planPagoRecibido(clienteACuenta(), { importe: '10', fecha: '', metodo: 'efectivo' }), null, 'sin fecha');
+  assert.equal(modoDiferido({ pago_diferido_modo: 'cuenta' }), 'cuenta');
+  assert.equal(modoDiferido({}), 'sesion');
+  assert.equal(deudaDiferida(clienteDiferida(), AHORA_REV).modo, 'sesion');
+  assert.equal(deudaDiferida(clienteDiferida(), AHORA_REV).debe, true);
+});
+
+test('a cuenta: sus pagos NO generan comisión automática (se pone a mano), los demás sí', () => {
+  const normal = { id: 'n', nombre: 'Ok', apellidos: '', estado: 'efectivo', entrenador_id: 'edu', origen: 'codek', bonos: [{ id: 'bn', precio: 100, pagado_el: '2026-10-02', metodo_pago: 'efectivo', sesiones: 4 }] };
+  const aCuenta = clienteACuenta({ bonos: [{ id: 'bc', sesiones: 0, precio: 100, pagado_el: '2026-10-02', tipo: 'cobro' }] });
+  const porSesion = clienteDiferida({ bonos: [{ id: 'bs', sesiones: 2, precio: 70, pagado_el: '2026-10-02', tipo: 'cobro' }] });
+  assert.deepEqual(bonosLiquidablesMes([normal, aCuenta, porSesion], '2026-10').map(f => f.bono.id).sort(), ['bn', 'bs']);
+  // y si deja de estar a cuenta (o no está aprobado), vuelven a contar
+  assert.ok(bonosLiquidablesMes([{ ...aCuenta, pago_diferido_modo: 'sesion' }], '2026-10').some(f => f.bono.id === 'bc'));
+  assert.ok(bonosLiquidablesMes([{ ...aCuenta, pago_diferido: 'no' }], '2026-10').some(f => f.bono.id === 'bc'));
+});
+
+test('revisión: a cuenta avisa de lo que debe en euros y del saldo a favor', () => {
+  const inc = incidenciasCliente(clienteACuenta(), AHORA_REV);
+  assert.deepEqual(inc.map(i => i.clave), ['deuda_diferida']);
+  assert.match(inc[0].texto, /5 sesiones hechas = 270,00.*pagado 108,00.*debe 162,00/);
+  const favor = incidenciasCliente(clienteACuenta({ bonos: [{ id: 'x', sesiones: 0, precio: 300, pagado_el: '2026-10-03', tipo: 'cobro' }] }), AHORA_REV);
+  assert.deepEqual(favor.map(i => i.clave), ['saldo_a_favor']);
+  assert.match(favor[0].texto, /30,00.*saldo a favor/);
+  assert.deepEqual(incidenciasCliente(clienteACuenta({ bonos: [{ id: 'x', sesiones: 0, precio: 270, pagado_el: '2026-10-03', tipo: 'cobro' }] }), AHORA_REV), []);
 });
 
 test('quien paga después no pasa a «RENOVAR»', () => {

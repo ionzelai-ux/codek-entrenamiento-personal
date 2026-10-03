@@ -84,22 +84,50 @@ export function consumoPorBono(cliente, ahora = new Date()) {
 // administrador elige qué sesiones abona: se crea un bono de tipo 'cobro' y esas sesiones quedan enlazadas a él
 // (sesion.cobro_bono_id). Si además tiene bonos normales, estos cubren primero sus sesiones más antiguas.
 export const esDiferido = c => c?.pago_diferido === 'aprobado';
+// Modalidad (solo la elige el administrador): 'sesion' = precio por sesión y se eligen las sesiones que se abonan;
+// 'cuenta' = se apuntan pagos recibidos (importe + fecha) sin cuadrarlos con sesiones concretas, y el balance es en euros.
+export const modoDiferido = c => (c?.pago_diferido_modo === 'cuenta' ? 'cuenta' : 'sesion');
+const redondeo = n => Math.round(n * 100) / 100;
 
+// Lo que debe un cliente que entrena y paga después, o null si no lo es. `debe` dice si hay algo por cobrar.
+//   modo 'sesion': pendientes = sesiones hechas que nadie ha cobrado; importe = n × tarifa.
+//   modo 'cuenta': valor = TODAS las hechas × tarifa; pagado = lo que ha pagado (cualquier bono pagado o pago a cuenta);
+//                  importe = lo que aún debe (valor − pagado, nunca negativo) y aFavor = lo que haya pagado de más.
 export function deudaDiferida(c, ahora = new Date()) {
   if (!esDiferido(c)) return null;
   const hechas = (c.sesiones || []).filter(s => { const e = estadoEfectivo(s, ahora); return e === 'hecha' || e === 'auto'; })
     .sort((a, b) => a.fecha.localeCompare(b.fecha) || a.hora.localeCompare(b.hora));
+  const tarifa = c.tarifa_sesion === null || c.tarifa_sesion === undefined || c.tarifa_sesion === '' ? null : Number(c.tarifa_sesion);
+  const reservadas = (c.sesiones || []).filter(s => estadoEfectivo(s, ahora) === 'reservada').length;
+
+  if (modoDiferido(c) === 'cuenta') {
+    const pagado = redondeo((c.bonos || []).filter(b => b.pagado_el).reduce((t, b) => t + (Number(b.precio) || 0), 0));
+    const valor = tarifa === null ? null : redondeo(hechas.length * tarifa);
+    const saldo = valor === null ? null : redondeo(valor - pagado);
+    return {
+      modo: 'cuenta', pendientes: [], n: hechas.length, tarifa, valor, pagado, cobrado: pagado, cobradas: 0, reservadas,
+      importe: saldo === null ? null : Math.max(0, saldo), aFavor: saldo === null ? 0 : Math.max(0, -saldo),
+      debe: saldo === null ? hechas.length > 0 && pagado === 0 : saldo > 0.004,
+    };
+  }
   const sinCobro = hechas.filter(s => !s.cobro_bono_id);
   const bonosNormales = (c.bonos || []).filter(b => (b.tipo || 'bono') !== 'cobro').reduce((t, b) => t + (Number(b.sesiones) || 0), 0);
   const pendientes = sinCobro.slice(Math.min(sinCobro.length, bonosNormales));   // lo que ningún bono ni cobro cubre
-  const tarifa = c.tarifa_sesion === null || c.tarifa_sesion === undefined || c.tarifa_sesion === '' ? null : Number(c.tarifa_sesion);
   const cobrado = (c.bonos || []).filter(b => b.tipo === 'cobro' && b.pagado_el).reduce((t, b) => t + (Number(b.precio) || 0), 0);
   return {
-    pendientes, n: pendientes.length, tarifa,
-    importe: tarifa === null ? null : Math.round(pendientes.length * tarifa * 100) / 100,
-    cobradas: hechas.length - sinCobro.length, cobrado: Math.round(cobrado * 100) / 100,
-    reservadas: (c.sesiones || []).filter(s => estadoEfectivo(s, ahora) === 'reservada').length,
+    modo: 'sesion', pendientes, n: pendientes.length, tarifa, debe: pendientes.length > 0,
+    importe: tarifa === null ? null : redondeo(pendientes.length * tarifa),
+    cobradas: hechas.length - sinCobro.length, cobrado: redondeo(cobrado), reservadas,
   };
+}
+
+// Pago recibido de un cliente «a cuenta»: un bono de tipo 'cobro' ya pagado y con 0 sesiones (no se cuadra con ninguna).
+// Devuelve null si el importe no es un número positivo.
+export function planPagoRecibido(c, { importe, fecha, metodo } = {}) {
+  const t = String(importe ?? '').trim().replace(',', '.');
+  const n = Number(t);
+  if (t === '' || !Number.isFinite(n) || n <= 0 || !fecha) return null;
+  return { cliente_id: c.id, sesiones: 0, precio: redondeo(n), fecha_pago: fecha, fecha_inicio: fecha, metodo_pago: metodo, pagado_el: fecha, tipo: 'cobro' };
 }
 
 // Datos del bono de tipo 'cobro' que se crea al abonar sesiones (solo el administrador). Devuelve null si no hay sesiones.
@@ -296,7 +324,9 @@ export function incidenciasCliente(c, ahora = new Date()) {
   }
   if (dif) {
     // Entrena y paga después (aprobado): no tener bono es lo normal; lo que importa es lo que debe.
-    if (dif.n) nueva('info', 'deuda_diferida', `Entrena y paga después: debe ${plural(dif.n, 'sesión', 'sesiones')}${dif.importe === null ? ' (sin tarifa)' : ` (${fmtE(dif.importe)})`}.`);
+    if (dif.debe && dif.modo === 'cuenta') nueva('info', 'deuda_diferida', `Paga a cuenta: ${plural(dif.n, 'sesión hecha', 'sesiones hechas')}${dif.valor === null ? ' (sin tarifa)' : ` = ${fmtE(dif.valor)}, ha pagado ${fmtE(dif.pagado)}: debe ${fmtE(dif.importe)}`}.`);
+    else if (dif.debe) nueva('info', 'deuda_diferida', `Entrena y paga después: debe ${plural(dif.n, 'sesión', 'sesiones')}${dif.importe === null ? ' (sin tarifa)' : ` (${fmtE(dif.importe)})`}.`);
+    if (dif.modo === 'cuenta' && dif.aFavor > 0) nueva('info', 'saldo_a_favor', `Ha pagado ${fmtE(dif.aFavor)} más de lo que lleva hecho (saldo a favor).`);
     if (dif.tarifa === null) nueva('media', 'sin_tarifa', 'Paga después pero no tiene tarifa por sesión: no se puede calcular lo que debe.');
   } else if (!bonos.length) {
     if (conSesion.length) nueva('alta', 'sesiones_sin_bono', `Tiene ${plural(conSesion.length, 'sesión', 'sesiones')} (${plural(cr.hechas, 'hecha', 'hechas')}) y ningún bono registrado: no consta qué se le ha cobrado.`);
@@ -469,6 +499,9 @@ export function comisionBono(bono, origen, config, override = null) {
 export function bonosLiquidablesMes(clientes, mes) {
   const filas = [];
   for (const c of clientes) {
+    // Quien paga «a cuenta» (se turnan los entrenadores): lo que paga no genera comisión automática de nadie;
+    // la comisión de esos clientes se pone a mano en «Ajustes manuales».
+    if (esDiferido(c) && modoDiferido(c) === 'cuenta') continue;
     for (const b of c.bonos || []) {
       if (b.pagado_el && String(b.pagado_el).slice(0, 7) === mes) filas.push({ cliente: c, bono: b });
     }

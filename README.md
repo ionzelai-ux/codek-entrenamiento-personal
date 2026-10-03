@@ -134,6 +134,13 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   después nunca pasa a «Renovar» ni necesita bono para no figurar con «info pendiente». Al **crear** un cliente (o convertir un potencial)
   se puede marcar «Entrena y paga después» y fijar el **precio acordado por sesión** (obligatorio): entonces no se pide bono; si lo
   marca un entrenador queda solicitado, si lo marca el administrador queda autorizado directamente.
+- **Paga después «a cuenta»** (`sql/15_pago_a_cuenta_y_ajustes_visibles.sql`): segunda modalidad del «paga después», que fija solo
+  el administrador (botón «Cambiar modalidad» en la ficha), para quien es difícil cuadrar el dinero con las clases (p. ej. se
+  turnan los entrenadores). Se apuntan **pagos recibidos** con «💶 Pago recibido…» (importe, fecha y método; sin elegir sesiones;
+  es un bono de tipo `cobro` con 0 sesiones) y el balance es en euros: **sesiones hechas × tarifa − lo pagado** (con «saldo a
+  favor» si paga de más). Lo que ya hubiera pagado cuenta como pagado. **Sus pagos no generan comisión automática** de nadie; la
+  comisión de sus clases se pone a mano en «Ajustes manuales». La modalidad «por sesión» sigue igual (precio por clase y se eligen
+  las sesiones abonadas).
 - **Renovar**: si el último bono de un cliente está pagado y le quedan 2 sesiones o menos (o se agotó) sin que haya
   un bono nuevo, se marca «RENOVAR» con el importe del último bono como referencia.
 - **Resumen → Facturación prevista**: la fecha de pago de cada bono decide en qué mes cuenta; muestra el total de
@@ -158,8 +165,8 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   de IVA / Seguridad Social con las casillas «Declarado» y «Efectivo/Nómina». Con «↩ Incluir» vuelve a la liquidación
   normal. Además, «+ Añadir línea manual» crea líneas sueltas (concepto, clases, precio…) para ese entrenador y mes.
   Todo recalcula al escribir (también con coma decimal) y se guarda al soltar el campo; solo el administrador lo ve.
-  **Pestaña de comisiones del entrenador** (`sql/14_comisiones_entrenadores_ven.sql`): cada entrenador que participa en el sistema
-  de comisiones (`aplica_comisiones`, no Jesús por ahora) tiene su pestaña, con SOLO sus bonos cobrados y como una **simulación**:
-  puede jugar con «declarado», «efectivo / nómina» y los porcentajes para ver cómo salen los números, pero nada se guarda (se queda
-  en pantalla; «↺ Restablecer» lo borra) y no ve las exclusiones ni los ajustes manuales del administrador. Los porcentajes de
-  partida son los guardados por el administrador (los entrenadores pueden leerlos, no cambiarlos). Seguridad Social por defecto: 32,5 %.
+  **Pestaña de comisiones del entrenador** (`sql/14` y `sql/15`): cada entrenador que participa en el sistema de comisiones
+  (`aplica_comisiones`, no Jesús por ahora) tiene su pestaña, con SOLO sus bonos cobrados y como una **simulación** que **parte de lo
+  que ha decidido el administrador sobre lo suyo** (exclusiones, ajustes manuales, nómina/efectivo, porcentajes: la base de datos se
+  lo deja LEER, nunca cambiar). Encima puede jugar con todo —«Incluir», «declarado», «efectivo / nómina», porcentajes y ajustes—, pero
+  nada se guarda (se queda en pantalla; «↺ Restablecer» vuelve a lo del administrador). Seguridad Social por defecto: 32,5 %.

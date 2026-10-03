@@ -3,11 +3,11 @@ import { S, bus, esAdmin, entrenadorDe, nombreCompleto, clienteDe, entrenadorFil
 import { esc, abrirModal, dialogo, toast, fmtEUR, fmtFecha, fmtFechaDia, textoDias, etiquetaMetodo, filtroEntrenadorHTML } from './util.js';
 import {
   hoyISO, creditos, consumoPorBono, estadoEfectivo, estadoPago, estadoCobro, edad, camposPendientes, tieneLesionActiva,
-  incidenciasCliente, revisionDatos, esDiferido, deudaDiferida,
+  incidenciasCliente, revisionDatos, esDiferido, deudaDiferida, modoDiferido,
 } from './logica.js';
 import {
   modalCliente, modalConvertir, modalBono, modalEditarBono, modalGenerar, modalCambiarHorario, modalSesion, cambiarEstadoSesion,
-  modalTarifaDiferido, modalCobrarSesiones,
+  modalTarifaDiferido, modalCobrarSesiones, modalPagoRecibido, modalModoDiferido,
 } from './modales.js';
 
 const ETIQUETA = { reservada: 'RESERV.', hecha: 'HECHA', no_vino: 'NO VINO', auto: 'AUTO' };
@@ -30,7 +30,7 @@ function filtrados() {
       const f = S.cli.pago;
       if (f === 'todos') return true;
       if (f === 'solicitud') return c.pago_diferido === 'solicitado';                     // solicitudes de «paga después» por aprobar
-      if (f === 'deuda') return (deudaDiferida(c)?.n || 0) > 0;                          // aprobados con sesiones por cobrar
+      if (f === 'deuda') return !!deudaDiferida(c)?.debe;                                // aprobados con algo por cobrar
       return estadoCobro(c, hoy)?.clave === f;
     })
     .sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es'));
@@ -44,7 +44,7 @@ function cobrosHTML() {
     const e = estadoCobro(c, hoy);
     if (e?.clave === 'pendiente') { pend++; importe += e.importe; } else if (e?.clave === 'renovar') renovar++;
     const d = deudaDiferida(c);
-    if (d?.n) { deuda++; if (d.importe === null) sinTarifa++; else deudaImporte += d.importe; }
+    if (d?.debe) { deuda++; if (d.importe === null) sinTarifa++; else deudaImporte += d.importe; }
     if (c.pago_diferido === 'solicitado') solicitudes++;
   }
   if (!pend && !renovar && !deuda && !(solicitudes && esAdmin())) return '';
@@ -52,7 +52,7 @@ function cobrosHTML() {
   return `<div class="cobro-strip">💶 ${[
     pend ? boton('pendiente', `<b>${pend}</b> pendiente${pend === 1 ? '' : 's'} · <b>${fmtEUR(importe)}</b> por cobrar`) : '',
     renovar ? boton('renovar', `<b>${renovar}</b> por renovar`) : '',
-    deuda ? boton('deuda', `<b>${deuda}</b> con sesiones por cobrar${deudaImporte ? ` · <b>${fmtEUR(deudaImporte)}</b>` : ''}${sinTarifa ? ` (${sinTarifa} sin tarifa)` : ''}`) : '',
+    deuda ? boton('deuda', `<b>${deuda}</b> con algo por cobrar${deudaImporte ? ` · <b>${fmtEUR(deudaImporte)}</b>` : ''}${sinTarifa ? ` (${sinTarifa} sin tarifa)` : ''}`) : '',
     solicitudes && esAdmin() ? boton('solicitud', `⏳ <b>${solicitudes}</b> solicitud${solicitudes === 1 ? '' : 'es'} de «paga después»`) : '',
   ].filter(Boolean).join(' · ')}</div>`;
 }
@@ -86,8 +86,11 @@ function itemHTML(c) {
   let extra;
   const dif = c.estado === 'efectivo' ? deudaDiferida(c) : null;
   if (dif) {
-    extra = `<div class="pago-row"><span class="pago-txt">${dif.n
-      ? `debe <b>${dif.n}</b> ${dif.n === 1 ? 'sesión' : 'sesiones'}${dif.importe === null ? ' · sin tarifa' : ` · <b>${fmtEUR(dif.importe)}</b>`}` : 'al día ✓'}${dif.reservadas ? ` · ${dif.reservadas}🟡` : ''}</span></div>`;
+    const texto = dif.modo === 'cuenta'
+      ? (dif.debe ? `debe <b>${dif.importe === null ? 'sin tarifa' : fmtEUR(dif.importe)}</b> · ${dif.n} ${dif.n === 1 ? 'sesión' : 'sesiones'} · pagado ${fmtEUR(dif.pagado)}`
+        : dif.aFavor > 0 ? `saldo a favor <b>${fmtEUR(dif.aFavor)}</b>` : 'al día ✓')
+      : (dif.debe ? `debe <b>${dif.n}</b> ${dif.n === 1 ? 'sesión' : 'sesiones'}${dif.importe === null ? ' · sin tarifa' : ` · <b>${fmtEUR(dif.importe)}</b>`}` : 'al día ✓');
+    extra = `<div class="pago-row"><span class="pago-txt">${texto}${dif.reservadas ? ` · ${dif.reservadas}🟡` : ''}</span></div>`;
   } else if (c.estado === 'efectivo') {
     const cr = creditos(c);
     if (!cr.total) extra = `<div class="credit-text">Sin bono${cr.hechas ? ` · ${cr.hechas} hechas` : ''}</div>`;
@@ -125,8 +128,10 @@ function panelDiferidoHTML(c) {
   const quien = esc(entrenadorDe(c.entrenador_id)?.nombre || 'El entrenador');
   let cuerpo;
   if (c.pago_diferido === 'aprobado') {
-    cuerpo = `<span>✅ <b>Entrena y paga después</b> · autorizado por el administrador · ${esc(tarifa)}</span>
-      ${admin ? `<span class="dif-acciones"><button class="btn btn-sm btn-secondary" data-acc="dif-tarifa" data-id="${c.id}">Cambiar tarifa</button>
+    const modo = modoDiferido(c) === 'cuenta' ? 'a cuenta (pagos recibidos, sin cuadrar sesiones; su comisión se pone a mano)' : 'por sesión';
+    cuerpo = `<span>✅ <b>Entrena y paga después</b> · autorizado por el administrador · ${esc(tarifa)} · <b>${modo}</b></span>
+      ${admin ? `<span class="dif-acciones"><button class="btn btn-sm btn-secondary" data-acc="dif-modo" data-id="${c.id}">Cambiar modalidad</button>
+        <button class="btn btn-sm btn-secondary" data-acc="dif-tarifa" data-id="${c.id}">Cambiar tarifa</button>
         <button class="btn btn-sm btn-secondary" data-acc="dif-retirar" data-id="${c.id}">Retirar autorización</button></span>` : ''}`;
   } else if (c.pago_diferido === 'solicitado') {
     cuerpo = admin
@@ -169,10 +174,16 @@ function fichaHTML(c) {
   if (efe) {
     if (dif) {
       // Entrena y paga después: no se avisa de «sin bono»; se avisa de lo que debe.
-      alertas += `<div class="alert alert-diferido alert-flex"><span>💶 <b>PAGA DESPUÉS</b> — ${dif.n
-        ? `debe <b>${dif.n}</b> ${dif.n === 1 ? 'sesión' : 'sesiones'}${dif.importe === null ? ' (falta indicar su tarifa por sesión)' : ` (${fmtEUR(dif.importe)} a ${fmtEUR(dif.tarifa)}/sesión)`}`
-        : 'no debe nada ahora mismo'}.</span>
-        ${dif.n && esAdmin() ? `<button class="btn btn-sm btn-cobrar" data-acc="cli-cobrar-sesiones" data-id="${c.id}">💶 Marcar como cobradas…</button>` : ''}</div>`;
+      const cuenta = dif.modo === 'cuenta';
+      const texto = cuenta
+        ? (dif.valor === null ? `lleva ${dif.n} ${dif.n === 1 ? 'sesión hecha' : 'sesiones hechas'} y ha pagado ${fmtEUR(dif.pagado)} (falta indicar su tarifa por sesión)`
+          : dif.debe ? `debe <b>${fmtEUR(dif.importe)}</b>: ${dif.n} ${dif.n === 1 ? 'sesión' : 'sesiones'} × ${fmtEUR(dif.tarifa)} = ${fmtEUR(dif.valor)} − ${fmtEUR(dif.pagado)} pagado`
+          : dif.aFavor > 0 ? `tiene un saldo a favor de <b>${fmtEUR(dif.aFavor)}</b> (ha pagado más de lo que lleva hecho)` : 'está al día, no debe nada')
+        : (dif.debe ? `debe <b>${dif.n}</b> ${dif.n === 1 ? 'sesión' : 'sesiones'}${dif.importe === null ? ' (falta indicar su tarifa por sesión)' : ` (${fmtEUR(dif.importe)} a ${fmtEUR(dif.tarifa)}/sesión)`}` : 'no debe nada ahora mismo');
+      const boton = !esAdmin() ? ''
+        : cuenta ? `<button class="btn btn-sm btn-cobrar" data-acc="cli-pago-recibido" data-id="${c.id}">💶 Pago recibido…</button>`
+        : dif.n ? `<button class="btn btn-sm btn-cobrar" data-acc="cli-cobrar-sesiones" data-id="${c.id}">💶 Marcar como cobradas…</button>` : '';
+      alertas += `<div class="alert alert-diferido alert-flex"><span>💶 <b>PAGA DESPUÉS${cuenta ? ' · A CUENTA' : ''}</b> — ${texto}.</span>${boton}</div>`;
     } else if (!cr.total) alertas += '<div class="alert alert-warn">Sin bono: añade uno para poder registrar sesiones.</div>';
     else if (cr.restantes === 0) alertas += '<div class="alert alert-danger">⚠ BONO AGOTADO — el cliente necesita renovar.</div>';
     else if (cr.restantes <= 2) alertas += `<div class="alert alert-warn">⚡ Solo quedan ${cr.restantes} sesión${cr.restantes === 1 ? '' : 'es'} — avisa al cliente.</div>`;
@@ -209,7 +220,9 @@ function fichaHTML(c) {
       const esCobro = b.tipo === 'cobro';
       return `
       <div class="bono-row">
-        <span>${fmtFecha(b.fecha_pago)} · ${esCobro ? 'cobro de' : 'bono de'} <b>${b.sesiones}</b> ${b.sesiones === 1 ? 'sesión' : 'sesiones'} · ${fmtEUR(b.precio / b.sesiones)}/ses
+        <span>${fmtFecha(b.fecha_pago)} · ${b.sesiones > 0
+          ? `${esCobro ? 'cobro de' : 'bono de'} <b>${b.sesiones}</b> ${b.sesiones === 1 ? 'sesión' : 'sesiones'} · ${fmtEUR(b.precio / b.sesiones)}/ses`
+          : '<b>pago a cuenta</b>'}
           ${dif ? '' : `<span class="chip ${uso.usadas >= uso.total ? 'rojo' : 'gris'}" title="Sesiones hechas que se descuentan de este bono">usadas ${uso.usadas} de ${uso.total}</span>`}
           <span class="chip ${clase}">${texto}${e === 'pagado' ? ` ${fmtFecha(b.pagado_el).slice(0, 5)}` : ''}</span>
           ${b.metodo_pago ? `<span class="chip">${etiquetaMetodo(b.metodo_pago)}</span>` : ''}</span>
@@ -245,7 +258,16 @@ function fichaHTML(c) {
     }).join('') || '<div class="vacio">Sin sesiones registradas</div>';
 
     // Quien paga después no tiene «créditos»: lo que importa es el balance de lo que debe y lo ya cobrado.
-    const widget = dif ? `
+    const widget = dif && dif.modo === 'cuenta' ? `
+      <div class="credit-widget balance">
+        <div class="cw-row">
+          <div class="cw-stat"><div class="cw-num" style="color:var(--red-light)">${dif.n}</div><div class="cw-label">Realizadas${dif.valor === null ? '' : ` · ${fmtEUR(dif.valor)}`}</div></div>
+          <div class="cw-stat"><div class="cw-num" style="color:var(--green-light)">${fmtEUR(dif.pagado)}</div><div class="cw-label">Pagado</div></div>
+          <div class="cw-stat"><div class="cw-num" style="color:${dif.debe ? '#ff6b6b' : 'var(--green-light)'}">${dif.importe === null ? '—' : fmtEUR(dif.importe)}</div><div class="cw-label">${dif.aFavor > 0 ? `Saldo a favor · ${fmtEUR(dif.aFavor)}` : 'Por cobrar'}</div></div>
+          <div class="cw-stat"><div class="cw-num" style="color:var(--yellow)">${dif.reservadas}</div><div class="cw-label">Reservadas</div></div>
+        </div>
+        <div class="dif-pend">Balance en euros: <b>${dif.n} ${dif.n === 1 ? 'sesión' : 'sesiones'}${dif.tarifa === null ? '' : ` × ${fmtEUR(dif.tarifa)}`}</b> menos lo pagado. Los pagos se apuntan con «Pago recibido» y no hace falta que cuadren con sesiones concretas.</div>
+      </div>` : dif ? `
       <div class="credit-widget balance">
         <div class="cw-row">
           <div class="cw-stat"><div class="cw-num" style="color:var(--red-light)">${cr.hechas}</div><div class="cw-label">Realizadas</div></div>
@@ -417,12 +439,15 @@ export const accionesClientes = {
       : cambiarPagoDiferido(c, 'Retirar solicitud', 'Retirar', 'Solicitud retirada', nombre => `¿Retirar la solicitud para <b>${nombre}</b>?`);
   },
   'cli-cobrar-sesiones': t => modalCobrarSesiones(clienteDe(t.dataset.id)),
+  'cli-pago-recibido': t => modalPagoRecibido(clienteDe(t.dataset.id)),
+  'dif-modo': t => modalModoDiferido(clienteDe(t.dataset.id)),
   'cobro-deshacer': async t => {
     const c = clienteDe(S.cliSel), b = c?.bonos.find(x => x.id === t.dataset.id);
     if (!esAdmin() || !b) return;
     const n = (c.sesiones || []).filter(s => s.cobro_bono_id === b.id).length;
     const ok = await dialogo({ titulo: 'Deshacer cobro', ok: 'Deshacer cobro', peligro: true,
-      mensaje: `<p>Se anulará el cobro de <b>${fmtEUR(b.precio)}</b> y ${n === 1 ? 'su sesión' : `sus ${n} sesiones`} ${n === 1 ? 'volverá' : 'volverán'} a quedar <b>por cobrar</b>. ¿Seguro?</p>` });
+      mensaje: n === 0 ? `<p>Se anulará el pago de <b>${fmtEUR(b.precio)}</b> y volverá a sumarse a lo que debe. ¿Seguro?</p>`
+        : `<p>Se anulará el cobro de <b>${fmtEUR(b.precio)}</b> y ${n === 1 ? 'su sesión' : `sus ${n} sesiones`} ${n === 1 ? 'volverá' : 'volverán'} a quedar <b>por cobrar</b>. ¿Seguro?</p>` });
     if (!ok) return;
     await S.api.eliminarBono(b.id);
     await bus.recargar();

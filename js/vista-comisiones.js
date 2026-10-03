@@ -3,9 +3,10 @@
 // todo se recalcula al momento, como una hoja de cálculo; se guarda en Supabase para la próxima vez. Un bono se puede
 // excluir de la liquidación normal: baja a «Ajustes manuales», donde se escribe a mano cuántas clases ha dado el
 // entrenador y a qué precio (y, si hace falta, otro % de comisión). También se pueden añadir líneas manuales sueltas.
-// ENTRENADOR: ve la misma pestaña pero solo con SUS bonos cobrados y como una SIMULACIÓN: puede jugar con
-// «declarado», «efectivo / nómina» y los porcentajes para ver cómo salen los números, pero nada se guarda y no ve
-// ni las exclusiones ni los ajustes manuales del administrador (la liquidación real la confirma él).
+// ENTRENADOR: ve la misma pestaña pero solo con SUS bonos cobrados y como una SIMULACIÓN. Parte de lo que el
+// administrador ha decidido sobre lo suyo (exclusiones, ajustes manuales, nómina / efectivo: solo lectura en la base
+// de datos) y encima puede jugar con todo —«Incluir», «declarado», «efectivo / nómina», los porcentajes y los ajustes—
+// para ver cómo salen los números, pero NADA de lo que cambie se guarda («↺ Restablecer» vuelve a lo del administrador).
 import { S, bus, esAdmin, puedeVerComisiones, entrenadorDe, nombreCompleto, entrenadorFiltroId } from './store.js';
 import { esc, fmtEUR, fmtFecha, nombreMes, etiquetaMetodo, toast, dialogo, filtroEntrenadorHTML } from './util.js';
 import {
@@ -25,14 +26,12 @@ export async function cargarComisiones() {
     if (admin) toast(e.message, true);   // un entrenador simplemente parte de los valores por defecto
     if (!S.comisiones.config) S.comisiones.config = { ...DEFAULT_CONFIG_COMISIONES };   // para poder seguir viendo la pantalla
   }
-  if (admin) {
-    try { S.comisiones.overrides = new Map((await S.api.listarOverridesComisiones()).map(o => [o.bono_id, o])); } catch (e) { toast(e.message, true); }
-    // Las líneas manuales van aparte: si aún no se ha ejecutado sql/12, el resto de la pantalla sigue funcionando.
-    try { S.comisiones.libres = await S.api.listarLineasManuales(); } catch (e) { S.comisiones.libres = []; toast(`Ajustes manuales no disponibles: ${e.message}`, true); }
-  } else {
-    S.comisiones.overrides = new Map();   // sus pruebas se quedan solo en pantalla
-    S.comisiones.libres = [];
-  }
+  // Lo que el administrador ha decidido (el entrenador solo recibe lo suyo: lo impone la base de datos, sql/15).
+  try { S.comisiones.overrides = new Map((await S.api.listarOverridesComisiones()).map(o => [o.bono_id, o])); }
+  catch (e) { S.comisiones.overrides = new Map(); if (admin) toast(e.message, true); }
+  // Las líneas manuales van aparte: si aún no se ha ejecutado sql/12, el resto de la pantalla sigue funcionando.
+  try { S.comisiones.libres = await S.api.listarLineasManuales(); }
+  catch (e) { S.comisiones.libres = []; if (admin) toast(`Ajustes manuales no disponibles: ${e.message}`, true); }
   S.comisiones.cargando = false;
   S.comisiones.cargado = true;
   bus.repintar();
@@ -52,14 +51,14 @@ function datos() {
 const plural = (n, uno, varios) => (n === 1 ? uno : varios);
 
 const cabeceraTabla = () => `<thead><tr>
-  ${esAdmin() ? '<th title="Desmarca para pasar este bono a «Ajustes manuales»">Incluir</th>' : ''}<th>Cliente</th><th class="num">Pagado el</th><th>Origen</th><th class="num">Importe</th>
+  <th title="Desmarca para pasar este bono a «Ajustes manuales»">Incluir</th><th>Cliente</th><th class="num">Pagado el</th><th>Origen</th><th class="num">Importe</th>
   <th>Declarado (IVA)</th><th>${esAdmin() ? 'Se le paga en' : 'Lo cobro en'}</th><th class="num">Base</th><th class="num">Comisión</th>
 </tr></thead>`;
 
 function filaHTML(f) {
   const c = f.cliente, b = f.bono;
   return `<tr>
-    ${esAdmin() ? `<td class="com-incluir"><input type="checkbox" data-acc="com-incluir" data-bono="${b.id}" checked aria-label="Incluir en la liquidación" title="Incluido en la liquidación. Desmárcalo para ajustarlo a mano"></td>` : ''}
+    <td class="com-incluir"><input type="checkbox" data-acc="com-incluir" data-bono="${b.id}" checked aria-label="Incluir en la liquidación" title="Incluido en la liquidación. Desmárcalo para ajustarlo a mano"></td>
     <td>${esc(nombreCompleto(c))}</td>
     <td class="num">${fmtFecha(b.pagado_el)}</td>
     <td><span class="chip ${c.origen === 'codek' ? 'granate' : 'gris'}">${c.origen === 'codek' ? 'CODEK' : 'EXTERNO'}</span> <span class="hint">${f.pct}%</span></td>
@@ -131,7 +130,7 @@ function grupoHTML(e, filas, lineas) {
     <div class="com-grupo-title"><i class="tc" style="background:${e.color || '#888'}"></i>${esc(e.nombre)}
       <span class="com-grupo-total">${fmtEUR(t.comision)}</span></div>
     ${tablaFilasHTML(filas.filter(f => !f.excluido))}
-    ${esAdmin() ? seccionManualHTML(e.id, lineas) : ''}
+    ${seccionManualHTML(e.id, lineas)}
     ${subtotalHTML(t)}
   </div>`;
 }
@@ -186,9 +185,10 @@ function panelConfigHTML(config) {
 }
 
 // Aviso fijo del entrenador: es una simulación, nada se guarda.
-const avisoSimulacionHTML = () => `<div class="alert alert-info alert-flex com-simulacion"><span>🧮 <b>SIMULACIÓN</b> — Aquí ves tus bonos cobrados de cada mes y la comisión que saldría con las condiciones pactadas.
-  Cambia «declarado», «efectivo / nómina» o los porcentajes para ver cómo salen los números: <b>nada de lo que cambies se guarda</b> ni modifica tu liquidación, que confirma el administrador.</span>
-  <button class="btn btn-sm btn-secondary" data-acc="com-reset" title="Vuelve a los valores pactados y a lo que marcan los bonos">↺ Restablecer</button></div>`;
+const avisoSimulacionHTML = () => `<div class="alert alert-info alert-flex com-simulacion"><span>🧮 <b>SIMULACIÓN</b> — Parte de lo que ha decidido el administrador sobre lo tuyo: tus bonos cobrados de cada mes, lo que está excluido y sus ajustes manuales.
+  Encima puedes jugar con todo —«Incluir», «declarado», «efectivo / nómina», los porcentajes y los ajustes— para ver cómo salen los números: <b>nada de lo que cambies se guarda</b>
+  ni modifica tu liquidación, que confirma el administrador.</span>
+  <button class="btn btn-sm btn-secondary" data-acc="com-reset" title="Vuelve a lo que ha decidido el administrador">↺ Restablecer</button></div>`;
 
 export function renderComisiones(el) {
   if (!puedeVerComisiones()) { el.innerHTML = ''; return; }
@@ -245,6 +245,7 @@ function aplicarLocal(key, cambios) {
 }
 // No se sustituye lo local por lo que devuelva el servidor: si ya se está escribiendo en otro campo se perdería.
 async function persistirManual(key, cambios) {
+  if (!esAdmin()) return;   // las pruebas de un entrenador se quedan en pantalla: nunca se guardan
   const [tipo, id] = tipoYId(key);
   try {
     if (tipo === 'b') await S.api.guardarOverrideComision(id, aColumnas('b', cambios));
@@ -289,7 +290,10 @@ export const accionesComisiones = {
   'com-man-declarado': t => cambiarManual(t.dataset.man, { declarado: t.checked }),
   'com-man-pago': t => cambiarManual(t.dataset.man, { pago_entrenador: t.dataset.v }),
   'com-man-nueva': async t => {
-    const nueva = await S.api.crearLineaManual({ mes: S.comisiones.mes, entrenador_id: t.dataset.ent });
+    // El entrenador crea la línea solo en pantalla (con un id local); el administrador la guarda de verdad.
+    const nueva = esAdmin()
+      ? await S.api.crearLineaManual({ mes: S.comisiones.mes, entrenador_id: t.dataset.ent })
+      : { id: `local-${Date.now()}`, mes: S.comisiones.mes, entrenador_id: t.dataset.ent, concepto: '', clases: null, precio: null, pct: null, declarado: false, pago_entrenador: 'efectivo' };
     S.comisiones.libres.push(nueva);
     refrescarTabla();
     const campo = document.querySelector(`[data-man="l:${nueva.id}"][data-campo="concepto"]`);
@@ -299,13 +303,13 @@ export const accionesComisiones = {
   'com-man-borrar': async t => {
     const [, id] = tipoYId(t.dataset.man);
     const l = S.comisiones.libres.find(x => x.id === id);
-    const ok = await dialogo({ titulo: 'Eliminar línea manual', mensaje: `<p>¿Eliminar la línea «${esc(l?.concepto || 'sin concepto')}»? No se puede deshacer.</p>`, ok: 'Eliminar', peligro: true });
+    const ok = await dialogo({ titulo: 'Eliminar línea manual', mensaje: `<p>¿Eliminar la línea «${esc(l?.concepto || 'sin concepto')}»?${esAdmin() ? ' No se puede deshacer.' : ' (Solo en tu simulación.)'}</p>`, ok: 'Eliminar', peligro: true });
     if (!ok) return;
-    await S.api.eliminarLineaManual(id);
+    if (esAdmin()) await S.api.eliminarLineaManual(id);
     S.comisiones.libres = S.comisiones.libres.filter(x => x.id !== id);
     refrescarTabla();
   },
-  // Entrenador: vuelve a los valores pactados y a lo que marcan los bonos (borra solo sus pruebas)
+  // Entrenador: vuelve a lo que ha decidido el administrador (borra solo sus pruebas)
   'com-reset': async () => { S.comisiones.cargado = false; await cargarComisiones(); toast('Pruebas restablecidas'); },
   'com-guardar-config': async () => {
     if (!esAdmin()) return;

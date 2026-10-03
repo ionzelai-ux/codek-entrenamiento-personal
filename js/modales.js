@@ -6,7 +6,7 @@ import {
   hoyISO, precioBonoSugerido, precioHoraSugerido, buscarConflictos, generarFechas,
   creditos, estadoEfectivo, ocupaCredito, diaSemana,
   sesionesCambiables, horaNueva, planCambioHorario, diasFijosActualizados,
-  esDiferido, deudaDiferida, planCobroSesiones,
+  esDiferido, deudaDiferida, planCobroSesiones, planPagoRecibido, modoDiferido,
 } from './logica.js';
 import { OPCIONES_BONO, DURACION_SESION_MIN } from './config.js';
 
@@ -728,6 +728,74 @@ export function modalCobrarSesiones(c) {
     m.cerrar();
     await bus.recargar();
     toast(`${plan.sesionIds.length === 1 ? '1 sesión cobrada' : `${plan.sesionIds.length} sesiones cobradas`} · ${fmtEUR(plan.bono.precio)}`);
+  });
+}
+
+// ── Pago recibido de un cliente «a cuenta» (solo administrador) ───────────
+// Solo importe, fecha y método: no hace falta que cuadre con ninguna sesión. Se apunta como un cobro ya pagado de 0
+// sesiones y se resta de lo que debe (sesiones hechas × tarifa − lo pagado).
+export function modalPagoRecibido(c) {
+  const d = c && deudaDiferida(c);
+  if (!d || d.modo !== 'cuenta') { toast('Este cliente no paga «a cuenta».', true); return; }
+  const m = abrirModal(`
+    <div class="modal-title">Pago recibido</div>
+    <p class="sub">${esc(nombreCompleto(c))} · ${d.n} ${d.n === 1 ? 'sesión hecha' : 'sesiones hechas'}${d.valor === null ? '' : ` = ${esc(fmtEUR(d.valor))}`} · pagado ${esc(fmtEUR(d.pagado))}${d.debe && d.importe !== null ? ` · debe ${esc(fmtEUR(d.importe))}` : ''}</p>
+    <form novalidate>
+      <div class="form-row3">
+        <div class="form-group"><label class="form-label">Importe recibido (€) *</label><input class="form-input" name="importe" type="text" inputmode="decimal" autocomplete="off" placeholder="p. ej. 100"></div>
+        <div class="form-group"><label class="form-label">Fecha *</label><input class="form-input" name="fecha" type="date" value="${hoyISO()}"></div>
+        <div class="form-group"><label class="form-label">Método *</label>${segHTML('metodo_pago', METODOS_PAGO, '')}</div>
+      </div>
+      <div class="hint" data-resumen>Escribe lo que te han pagado y la fecha. No hace falta que cuadre con las clases.</div>
+      ${acciones('Apuntar pago')}
+    </form>`);
+  const form = m.el.querySelector('form');
+  const resumen = m.el.querySelector('[data-resumen]');
+  bindCerrar(m); bindSeg(m.el);
+  const leer = () => { const t = form.elements.importe.value.trim().replace(',', '.'); const n = Number(t); return t === '' || !Number.isFinite(n) ? NaN : n; };
+  form.elements.importe.addEventListener('input', () => {
+    const n = leer();
+    if (Number.isNaN(n) || n <= 0) { resumen.textContent = 'Escribe lo que te han pagado y la fecha. No hace falta que cuadre con las clases.'; return; }
+    if (d.valor === null) { resumen.innerHTML = `Se apuntará un pago de <b>${esc(fmtEUR(n))}</b>. (Falta su tarifa por sesión para calcular lo que debe.)`; return; }
+    const saldo = Math.round((d.valor - d.pagado - n) * 100) / 100;
+    resumen.innerHTML = `Se apuntará un pago de <b>${esc(fmtEUR(n))}</b>. ${saldo > 0.004 ? `Quedarán por cobrar <b>${esc(fmtEUR(saldo))}</b>.` : saldo < -0.004 ? `Quedará un saldo a favor de <b>${esc(fmtEUR(-saldo))}</b>.` : 'Quedará <b>al día</b>.'}`;
+  });
+  alEnviar(m, form, async () => {
+    const val = nuevoValidador(m.el);
+    const importe = leer(), fecha = form.elements.fecha.value, metodo = segVal(m.el, 'metodo_pago');
+    val.exige(!Number.isNaN(importe) && importe > 0, 'importe', 'importe recibido');
+    val.exige(fecha, 'fecha', 'fecha');
+    val.exige(metodo, 'metodo_pago', 'método de pago');
+    val.cierra();
+    const plan = planPagoRecibido(c, { importe, fecha, metodo });
+    await S.api.crearBono(plan);
+    m.cerrar();
+    await bus.recargar();
+    toast(`Pago de ${fmtEUR(plan.precio)} apuntado`);
+  });
+}
+
+// ── Modalidad del pago diferido (solo administrador) ──────────────────────
+export function modalModoDiferido(c) {
+  if (!c || !esDiferido(c)) return;
+  const m = abrirModal(`
+    <div class="modal-title">Modalidad de «paga después»</div>
+    <p class="sub">${esc(nombreCompleto(c))}</p>
+    <form novalidate>
+      <div class="form-group">${segHTML('modo', [['sesion', 'Por sesión'], ['cuenta', 'A cuenta']], modoDiferido(c))}</div>
+      <div class="hint" style="line-height:1.7"><b>Por sesión</b>: precio por sesión; al cobrar eliges qué sesiones te han abonado.<br>
+        <b>A cuenta</b>: apuntas pagos recibidos (importe y fecha) sin cuadrarlos con sesiones; el balance es en euros (sesiones hechas × tarifa − lo pagado).
+        Para quien se turna entre entrenadores: <b>sus pagos no generan comisión automática</b>, la comisión se pone a mano en «Ajustes manuales».</div>
+      ${acciones('Guardar')}
+    </form>`);
+  const form = m.el.querySelector('form');
+  bindCerrar(m); bindSeg(m.el);
+  alEnviar(m, form, async () => {
+    const modo = segVal(m.el, 'modo');
+    if (modo !== modoDiferido(c)) await S.api.guardarCliente({ id: c.id, pago_diferido_modo: modo });
+    m.cerrar();
+    await bus.recargar();
+    toast(modo === 'cuenta' ? 'Modalidad: a cuenta' : 'Modalidad: por sesión');
   });
 }
 
