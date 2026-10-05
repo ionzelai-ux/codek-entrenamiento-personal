@@ -231,7 +231,8 @@ const COLUMNA_BONO = { clases: 'manual_clases', precio: 'manual_precio', pct: 'm
 const aColumnas = (tipo, cambios) => (tipo === 'b'
   ? Object.fromEntries(Object.entries(cambios).map(([k, v]) => [COLUMNA_BONO[k] ?? k, v])) : cambios);
 const tipoYId = key => [key[0], key.slice(2)];
-const aNumero = texto => { const t = String(texto).trim().replace(',', '.'); const n = Number(t); return t === '' || !Number.isFinite(n) ? null : n; };
+// Se admite que se escriba «40%», «35 €» o «1.5» / «1,5»: los símbolos y espacios se ignoran (si no, un «40%» se leía como vacío y se aplicaba el % por defecto).
+const aNumero = texto => { const t = String(texto).replace(/[%€\s]/g, '').replace(',', '.'); const n = Number(t); return t === '' || !Number.isFinite(n) ? null : n; };
 
 function aplicarLocal(key, cambios) {
   const [tipo, id] = tipoYId(key);
