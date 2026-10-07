@@ -232,7 +232,7 @@ function fichaHTML(c) {
           ${esAdmin() ? (e === 'pagado'
             ? `<button class="btn btn-sm btn-secondary" data-acc="bono-pagar" data-id="${b.id}" data-v="0" title="Volver a dejarlo sin confirmar">Deshacer pago</button>`
             : `<button class="btn btn-sm btn-cobrar" data-acc="bono-pagar" data-id="${b.id}" data-v="1" title="Confirmar que se ha cobrado">✓ Marcar pagado</button>`) : ''}
-          <button class="sess-del" data-acc="bono-editar" data-id="${b.id}" title="Editar bono">✎</button>
+          <button class="btn btn-sm btn-secondary" data-acc="bono-editar" data-id="${b.id}" title="Cambiar sesiones, importe, fechas o método de pago">✎ Editar</button>
           <button class="sess-del" data-acc="bono-borrar" data-id="${b.id}" title="Eliminar bono">✕</button></span>`}
       </div>`;
     }).join('') || '<span style="opacity:.4">Sin bonos</span>';
