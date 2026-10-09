@@ -3,7 +3,7 @@ import { S, bus, esAdmin, entrenadorDe, nombreCompleto, entrenadorFiltroId } fro
 import { esc, nombreMes, mesCorto, dialogo, toast, fmtFechaDia, filtroEntrenadorHTML } from './util.js';
 import {
   hoyISO, addDias, lunesDe, primerDiaMes, ultimoDiaMes, parseISO, horaAMin, minAHora,
-  estadoEfectivo, repartirCarriles, buscarConflictos,
+  estadoEfectivo, repartirCarriles, buscarConflictos, marcasBono,
 } from './logica.js';
 import { HORA_INICIO_CALENDARIO, HORA_FIN_CALENDARIO, DURACION_SESION_MIN } from './config.js';
 import { modalSesion } from './modales.js';
@@ -41,7 +41,12 @@ function titulo() {
 const colorEntr = s => entrenadorDe(s.clientes?.entrenador_id)?.color || '#888';
 const mostrarEntr = () => esAdmin() && !entrenadorFiltroId();
 const pastilla = s => (mostrarEntr() ? `<i class="tc" style="background:${colorEntr(s)}"></i>` : '');
-const tip = s => `${s.hora} · ${nombreCompleto(s.clientes)}${mostrarEntr() ? ' · ' + (entrenadorDe(s.clientes.entrenador_id)?.nombre || '') : ''} · ${ETIQUETA[estadoEfectivo(s)]}${s.nota ? ' · ' + s.nota : ''}`;
+// Penúltima y última sesión del bono de cada cliente: el entrenador ve de un vistazo cuándo avisar para renovar.
+const MARCA_BONO = { penultima: ['⚡', 'Penúltima clase del bono: avisa para renovar'], ultima: ['🏁', 'Última clase del bono: toca renovar'] };
+let marcas = new Map();
+const marcaBono = s => MARCA_BONO[marcas.get(s.id)] || null;
+const iconoBono = s => { const m = marcaBono(s); return m ? `<span class="marca-bono" aria-label="${esc(m[1])}">${m[0]}</span>` : ''; };
+const tip = s => `${s.hora} · ${nombreCompleto(s.clientes)}${mostrarEntr() ? ' · ' + (entrenadorDe(s.clientes.entrenador_id)?.nombre || '') : ''} · ${ETIQUETA[estadoEfectivo(s)]}${s.nota ? ' · ' + s.nota : ''}${marcaBono(s) ? ' · ' + marcaBono(s)[1] : ''}`;
 
 function semanaHTML() {
   const { d1, d2 } = rango();
@@ -66,7 +71,7 @@ function semanaHTML() {
       const w = 100 / lanes;
       return `<div class="blk ${estadoEfectivo(s)}" data-acc="ses-abrir" data-id="${s.id}" title="${esc(tip(s))}"
           style="top:${top}px;height:${alto}px;left:calc(${lane * w}% + 1px);width:calc(${w}% - 2px)">
-        <div class="blk-h">${pastilla(s)}${minAHora(ini)}–${minAHora(fin)}</div>
+        <div class="blk-h">${pastilla(s)}${minAHora(ini)}–${minAHora(fin)}${iconoBono(s)}</div>
         <div class="blk-n">${esc(nombreCompleto(s.clientes))}</div></div>`;
     }).join('');
     return `<div class="wk-col ${f === hoy ? 'hoy' : ''}" data-acc="col-nuevo" data-fecha="${f}" data-h0="${h0}">${bloques}</div>`;
@@ -93,7 +98,7 @@ function mesHTML() {
   let celdas = '';
   for (let f = d1; f <= d2; f = addDias(f, 1)) {
     const lista = (porDia.get(f) || []).sort((a, b) => a.hora.localeCompare(b.hora));
-    const pills = lista.slice(0, 3).map(s => `<div class="cell-sess ${estadoEfectivo(s)}" data-acc="ses-abrir" data-id="${s.id}" title="${esc(tip(s))}">${pastilla(s)}${s.hora}<span class="pn"> ${esc(s.clientes.nombre)}</span></div>`).join('');
+    const pills = lista.slice(0, 3).map(s => `<div class="cell-sess ${estadoEfectivo(s)}" data-acc="ses-abrir" data-id="${s.id}" title="${esc(tip(s))}">${pastilla(s)}${s.hora}<span class="pn"> ${esc(s.clientes.nombre)}</span>${iconoBono(s)}</div>`).join('');
     const mas = lista.length > 3 ? `<div class="cell-mas" data-acc="dia-semana" data-fecha="${f}">+${lista.length - 3} más</div>` : '';
     celdas += `<div class="cal-cell ${f.slice(0, 7) !== mesActual ? 'fuera' : ''} ${f === hoy ? 'today' : ''}" data-acc="dia-nuevo" data-fecha="${f}">
       <div class="cell-num">${parseISO(f).getDate()}</div>${pills}${mas}</div>`;
@@ -104,6 +109,7 @@ function mesHTML() {
 function leyenda() {
   const items = [['reservada', 'var(--yellow)'], ['hecha', 'var(--green-light)'], ['auto', 'var(--blue-light)'], ['no_vino', '#cc4444']];
   let html = items.map(([k, c]) => `<div class="leg-item"><div class="leg-dot" style="background:${c}"></div>${ETIQUETA[k]}</div>`).join('');
+  html += '<div class="leg-item">⚡ Penúltima del bono</div><div class="leg-item">🏁 Última del bono</div>';
   if (mostrarEntr()) {
     html += S.entrenadores.map(e => `<div class="leg-item"><i class="tc" style="background:${e.color}"></i>${esc(e.nombre)}</div>`).join('');
   }
@@ -112,6 +118,7 @@ function leyenda() {
 }
 
 export function renderCalendario(el) {
+  marcas = marcasBono(S.clientes);
   const scrollPrevio = el.querySelector('.wk')?.scrollTop || 0;   // no perder la posición al repintar
   el.innerHTML = `
     <div class="cal-bar">

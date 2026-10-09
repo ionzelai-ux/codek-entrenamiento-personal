@@ -175,6 +175,95 @@ export function estadoCobro(cliente, hoy = hoyISO(), ahora = new Date()) {
   return { clave, importe: Number(ultimo.precio) || 0, fecha: ultimo.fecha_pago, n: 0, bonos: [ultimo] };
 }
 
+// ── Renovaciones: marcas en el calendario, bono vigente y proyección de ingresos ──────────────────────
+// Se da por hecho que todo cliente con bono renueva, salvo que se marque `no_renueva`. Si va a cambiar de bono se guardan
+// `proximo_bono_sesiones` y `proximo_bono_precio`. No aplica a clientes que no son efectivos, archivados ni «paga después».
+export const aplicaRenovacion = c => c?.estado === 'efectivo' && c.activo !== false && !esDiferido(c);
+const porFechaHora = (a, b) => a.fecha.localeCompare(b.fecha) || String(a.hora).localeCompare(String(b.hora));
+// Sesiones que gastan crédito (reservadas, hechas, sin confirmar), por orden de fecha.
+const sesionesQueConsumen = (c, ahora) => (c.sesiones || []).filter(s => ocupaCredito(estadoEfectivo(s, ahora))).sort(porFechaHora);
+const bonosConSesiones = c => (c.bonos || []).filter(b => b.tipo !== 'cobro' && Number(b.sesiones) > 0);
+
+// Marca en el calendario la penúltima y la última sesión que le cubre el crédito al cliente (suma de todos sus bonos):
+// Map(sesión id → 'penultima' | 'ultima'). Si ya tiene el siguiente bono, esas sesiones quedan más lejos y no se marcan antes.
+export function marcasBono(clientes, ahora = new Date()) {
+  const marcas = new Map();
+  for (const c of clientes) {
+    if (!aplicaRenovacion(c)) continue;
+    const total = creditos(c, ahora).total;
+    if (total < 1) continue;
+    const lista = sesionesQueConsumen(c, ahora);
+    if (total >= 2 && lista[total - 2]) marcas.set(lista[total - 2].id, 'penultima');
+    if (lista[total - 1]) marcas.set(lista[total - 1].id, 'ultima');
+  }
+  return marcas;
+}
+
+// El bono que el cliente está gastando ahora (el más antiguo con sesiones sin gastar; si están todos gastados, el último):
+//   total · hechas · reservadas (las que caben en este bono) · pendReserva = lo que falta por reservar ·
+//   pendRealizar = lo que falta por hacer. null si no tiene bonos con sesiones.
+export function bonoVigente(cliente, ahora = new Date()) {
+  const consumo = consumoPorBono(cliente, ahora);
+  const bonos = bonosConSesiones(cliente).sort((a, b) =>
+    String(a.fecha_inicio || '').localeCompare(String(b.fecha_inicio || '')) || String(a.fecha_pago || '').localeCompare(String(b.fecha_pago || '')));
+  if (!bonos.length) return null;
+  const uso = b => consumo.porBono.get(b.id);
+  const bono = bonos.find(b => uso(b).usadas < uso(b).total) || bonos[bonos.length - 1];
+  const { usadas, total } = uso(bono);
+  const reservadas = (cliente.sesiones || []).filter(s => estadoEfectivo(s, ahora) === 'reservada').length;
+  const reservadasAqui = Math.min(reservadas, total - usadas);
+  return { bono, total, hechas: usadas, reservadas: reservadasAqui, pendReserva: total - usadas - reservadasAqui, pendRealizar: total - usadas };
+}
+
+// Qué bono se da por hecho que comprará en la próxima renovación: el que haya indicado el cliente o, si no, igual que el último
+// (mismo nº de sesiones y mismo precio). Si cambia de nº de sesiones y no hay precio, el sugerido. null si no tiene bonos.
+export function planProximoBono(cliente) {
+  const ultimo = bonosConSesiones(cliente).sort((a, b) => String(a.fecha_pago).localeCompare(String(b.fecha_pago))).pop();
+  if (!ultimo) return null;
+  const hayCambio = Number(cliente.proximo_bono_sesiones) > 0;
+  const sesiones = hayCambio ? Number(cliente.proximo_bono_sesiones) : Number(ultimo.sesiones);
+  const precio = hayCambio && cliente.proximo_bono_precio !== null && cliente.proximo_bono_precio !== undefined && cliente.proximo_bono_precio !== ''
+    ? Number(cliente.proximo_bono_precio)
+    : sesiones === Number(ultimo.sesiones) ? Number(ultimo.precio) || 0 : precioBonoSugerido(sesiones);
+  return { sesiones, precio: redondeo(precio), cambiado: hayCambio && (sesiones !== Number(ultimo.sesiones) || precio !== Number(ultimo.precio)), ultimo };
+}
+
+// Previsión de renovaciones hasta `hasta` (ISO). Cada cliente que aplica y no ha dicho que no renueva:
+//   1) se estima el día en que se le acaba el crédito (la sesión que gasta el último crédito: si no están todas reservadas,
+//      se completan con sus días fijos) → ese día se supone que paga el siguiente bono (nunca antes de hoy);
+//   2) el siguiente bono es el que se haya indicado o el mismo del último; sus sesiones siguen sus días fijos y al acabarse
+//      toca la renovación siguiente, y así hasta `hasta`. Sin días fijos solo se puede proyectar la primera, y solo si ya se
+//      sabe el día en que acaba.
+// Devuelve { filas: [{cliente, fecha, sesiones, importe, numero, cambiado}] ordenadas por fecha, sinEstimar: [clientes] }.
+export function proyectarRenovaciones(clientes, hoy = hoyISO(), hasta = ultimoDiaMes(primerDiaMes(hoy, 6)), ahora = new Date()) {
+  const filas = [], sinEstimar = [];
+  for (const c of clientes) {
+    if (!aplicaRenovacion(c) || c.no_renueva) continue;
+    const plan = planProximoBono(c);
+    if (!plan || !(plan.sesiones > 0)) continue;
+    const total = creditos(c, ahora).total;
+    const lista = sesionesQueConsumen(c, ahora);
+    const dias = c.dias_fijos || [];
+    let fin;
+    if (lista.length >= total) fin = lista[total - 1].fecha;
+    else {
+      const desde = lista.length ? addDias(lista[lista.length - 1].fecha, 1) : (plan.ultimo.fecha_inicio > hoy ? plan.ultimo.fecha_inicio : hoy);
+      const extra = generarFechas({ desde, dias, cantidad: total - lista.length });
+      if (extra.length < total - lista.length) { sinEstimar.push(c); continue; }
+      fin = extra[extra.length - 1].fecha;
+    }
+    let pago = fin < hoy ? hoy : fin;
+    for (let numero = 1; pago <= hasta && numero <= 60; numero++) {
+      filas.push({ cliente: c, fecha: pago, sesiones: plan.sesiones, importe: plan.precio, numero, cambiado: numero === 1 && plan.cambiado });
+      const gen = generarFechas({ desde: addDias(pago, 1), dias, cantidad: plan.sesiones });
+      if (gen.length < plan.sesiones) break;
+      pago = gen[gen.length - 1].fecha;
+    }
+  }
+  filas.sort((a, b) => a.fecha.localeCompare(b.fecha));
+  return { filas, sinEstimar };
+}
+
 // ── Solapes ───────────────────────────────────────────────────────────────
 export function solapan(a, b) {
   if (a.fecha !== b.fecha) return false;

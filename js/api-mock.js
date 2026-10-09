@@ -69,6 +69,18 @@ function sesion(c, fecha, hora, estado = 'reservada') {
   const teo = cliente({ entrenador_id: 'p-edu', nombre: 'Teo', apellidos: 'Demo Solicitud', estado: 'efectivo', origen: 'codek', telefono: '600 000 007', lesiones: 'Ninguna',
     pago_diferido: 'solicitado', tarifa_sesion: 30 });
   [-10, -3].forEach(n => sesion(teo, addDias(lun, n), '12:00', 'hecha'));
+  // Bono de 4 al que le quedan 2 clases reservadas esta semana: la penúltima (⚡) y la última (🏁) del bono; renueva por defecto
+  const carla = cliente({ entrenador_id: 'p-edu', nombre: 'Carla', apellidos: 'Demo Renueva', estado: 'efectivo', origen: 'codek', telefono: '600 000 009', lesiones: 'Ninguna',
+    dias_fijos: [{ dia: 1, hora: '19:00' }, { dia: 4, hora: '19:00' }] });
+  bono(carla, 4, 180, addDias(lun, -14), addDias(lun, -14), 'tarjeta', addDias(lun, -13));
+  [-7, -4].forEach(n => sesion(carla, addDias(lun, n), '19:00', 'hecha'));
+  [0, 3].forEach(n => sesion(carla, addDias(lun, n), '19:00'));
+  // Bono de 4 que ha dicho que NO va a renovar: no entra en la previsión de ingresos
+  const dani = cliente({ entrenador_id: 'p-jes', nombre: 'Dani', apellidos: 'Demo No Renueva', estado: 'efectivo', origen: 'externo', telefono: '600 000 010', lesiones: 'Ninguna',
+    dias_fijos: [{ dia: 2, hora: '08:00' }, { dia: 5, hora: '08:00' }], no_renueva: true });
+  bono(dani, 4, 160, addDias(lun, -10), addDias(lun, -10), 'efectivo', addDias(lun, -10));
+  [-8, -5].forEach(n => sesion(dani, addDias(lun, n), '08:00', 'hecha'));
+  [1, 4].forEach(n => sesion(dani, addDias(lun, n), '08:00'));
   // Bono con pago programado para el mes siguiente
   const ivan = cliente({ entrenador_id: 'p-edu', nombre: 'Iván', apellidos: 'Demo Ortiz', estado: 'efectivo', origen: 'externo', telefono: '600 000 004' });
   bono(ivan, 8, 336, addDias(hoy.slice(0, 7) + '-01', 35).slice(0, 7) + '-05', addDias(hoy.slice(0, 7) + '-01', 35).slice(0, 7) + '-05', 'transferencia');

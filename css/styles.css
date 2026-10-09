@@ -330,6 +330,23 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
 .sess-cobrada { margin-left: 4px; }
 .tabla tfoot td { border-top: 2px solid var(--border); border-bottom: none; padding-top: 12px; }
 
+/* Renovaciones: marcas en el calendario, panel de la ficha, ficha del bono vigente y previsión del Resumen */
+.marca-bono { margin-left: 3px; font-size: 11px; line-height: 1; }
+.cell-sess .marca-bono { font-size: 9px; margin-left: 2px; }
+.cw-row.cw-5 { grid-template-columns: repeat(5, 1fr); }
+.cw-row.cw-5 .cw-num { font-size: 36px; }
+.cw-sub { margin-top: 10px; font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 1px; }
+.cw-sub b { color: var(--text); font-weight: 600; }
+.ren-panel { border: 1px dashed var(--border); padding: 10px 14px; margin-bottom: 18px; font-family: var(--mono); font-size: 12px; color: var(--muted);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ren-panel b { color: var(--text); }
+.ren-panel.no { border-color: var(--yellow); }
+.prev-prevista { background: repeating-linear-gradient(45deg, #777 0 3px, #444 3px 6px); }
+.chip.prevista { border-style: dashed; color: var(--muted); }
+.proy-det summary { cursor: pointer; padding: 8px 0; font-family: var(--mono); font-size: 12px; }
+.proy-det .tabla-wrap { margin-bottom: 10px; }
+.proy-aviso { margin: 8px 0 0; }
+
 /* Revisión de datos */
 .rev-n { font-weight: 700; }
 .rev-n.rev-alta { color: #ff6b6b; } .rev-n.rev-media { color: var(--yellow); } .rev-n.rev-ok { color: var(--green-light); }
@@ -383,6 +400,7 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
   .client-actions > * { flex: 1 1 45%; }
   .client-title { font-size: 32px; }
   .cw-row { grid-template-columns: repeat(2, 1fr); }
+  .cw-row.cw-5 { grid-template-columns: repeat(3, 1fr); }
   .kpis { grid-template-columns: 1fr 1fr; }
   .prevs { grid-template-columns: 1fr; }
   .cobro-strip { font-size: 11px; }

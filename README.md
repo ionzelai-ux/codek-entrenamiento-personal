@@ -145,7 +145,19 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   un bono nuevo, se marca «RENOVAR» con el importe del último bono como referencia.
 - **Resumen → Facturación prevista**: la fecha de pago de cada bono decide en qué mes cuenta; muestra el total de
   dos meses seguidos (por defecto este y el siguiente; con ◀ ▶ se puede ir hacia atrás, p. ej. para ver lo que se
-  cobró en septiembre), desglosado en pagado / pendiente de cobro / programado, con el detalle de cada bono.
+  cobró en septiembre), desglosado en pagado / pendiente de cobro / programado / **renovación prevista**, con el detalle de cada bono.
+- **Renovaciones** (`sql/17_renovaciones.sql`): se da por hecho que **todo cliente con bono renueva** (los que pagan después, los
+  potenciales y los archivados no).
+  · *Calendario*: la penúltima clase que le cubre el bono lleva ⚡ y la última 🏁 (también en la vista de mes y con texto al pasar el
+    ratón); no se marcan si ya tiene comprado el siguiente bono.
+  · *Ficha*: panel «Renovación» con **«No va a renovar»** (deja de contar en la previsión) y **«Cambiar el próximo bono…»** (p. ej. de 4
+    a 8 sesiones, con su precio; sugiere el de la tarifa). Lo pueden tocar el administrador y el entrenador del cliente. Al añadir un bono
+    nuevo ambas marcas se limpian. La ficha muestra *Bono vigente · Reservadas · Pendientes de reserva · Realizadas · Pendientes de
+    realizar* del bono que se está gastando (no la suma de todos los que ha tenido).
+  · *Resumen → Proyección*: este mes y los 6 siguientes, «ya contratado» + «renovaciones previstas». La renovación se imputa al día de la
+    última clase del bono (si no están todas reservadas se completan con sus días fijos; nunca antes de hoy), con el mismo bono (o el
+    indicado) y se encadenan las siguientes con sus días fijos. Sin días fijos solo se proyecta la primera, y si ni siquiera se sabe
+    cuándo acaba el bono, el cliente aparece en «No se han podido proyectar». Es una estimación, no un dato.
 - **Filtro por entrenador** (solo administrador): botones «Todos · Eduardo · Jesús» en Clientes, Calendario, Resumen y
   Comisiones, sincronizados con el desplegable de la cabecera. En el Resumen filtran todo (tarjetas, detalle por mes,
   por entrenador y por origen).

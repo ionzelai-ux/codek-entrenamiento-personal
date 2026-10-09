@@ -6,7 +6,7 @@ import {
   hoyISO, precioBonoSugerido, precioHoraSugerido, buscarConflictos, generarFechas,
   creditos, estadoEfectivo, ocupaCredito, diaSemana,
   sesionesCambiables, horaNueva, planCambioHorario, diasFijosActualizados,
-  esDiferido, deudaDiferida, planCobroSesiones, planPagoRecibido, modoDiferido,
+  esDiferido, deudaDiferida, planCobroSesiones, planPagoRecibido, modoDiferido, planProximoBono,
 } from './logica.js';
 import { OPCIONES_BONO, DURACION_SESION_MIN } from './config.js';
 
@@ -508,10 +508,67 @@ export function modalBono(c) {
     val.cierra();
     const generar = !!m.el.querySelector('[name=generar]')?.checked;
     const creado = await S.api.crearBono({ cliente_id: c.id, ...bono });
+    // Ya ha renovado: lo que se había apuntado sobre la próxima renovación (no renueva / cambia de bono) deja de valer.
+    if (c.no_renueva || c.proximo_bono_sesiones != null || c.proximo_bono_precio != null) {
+      await S.api.guardarCliente({ id: c.id, no_renueva: false, proximo_bono_sesiones: null, proximo_bono_precio: null });
+    }
     m.cerrar();
     await bus.recargar();
     toast('Bono añadido');
     if (generar) modalGenerar(clienteDe(c.id), { bono: creado, cantidad: creado.sesiones });
+  });
+}
+
+// ── Próximo bono: lo que se da por hecho que comprará en su próxima renovación (solo para la previsión de ingresos) ──
+export function modalProximoBono(c) {
+  const plan = planProximoBono(c);
+  if (!plan) { toast('Este cliente todavía no tiene ningún bono.', true); return; }
+  const m = abrirModal(`
+    <div class="modal-title">Próximo bono</div>
+    <p class="sub">${esc(nombreCompleto(c))} · último bono: ${plan.ultimo.sesiones} ${Number(plan.ultimo.sesiones) === 1 ? 'sesión' : 'sesiones'} · ${esc(fmtEUR(plan.ultimo.precio))}</p>
+    <form novalidate>
+      <div class="form-group">
+        <label class="form-label">Sesiones del próximo bono *</label>
+        <div class="bono-grid">${OPCIONES_BONO.map(n =>
+          `<button type="button" class="bono-opt" data-n="${n}"><span class="bono-opt-num">${n}</span><span class="bono-opt-lbl">sesiones</span></button>`).join('')}</div>
+        <input class="form-input" name="b_sesiones" type="number" min="1" step="1" value="${esc(plan.sesiones)}" placeholder="Otro nº de sesiones">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Precio total del próximo bono (€) *</label>
+        <input class="form-input" name="b_precio" type="number" min="0" step="0.01" value="${esc(plan.precio)}">
+        <div class="hint" data-hint-precio></div>
+      </div>
+      <div class="hint">Solo sirve para la previsión de ingresos: no crea ningún bono ni ningún pago. Cuando renueve de verdad, añade el bono como siempre.</div>
+      ${acciones('Guardar')}
+    </form>`, 'modal-lg');
+  const form = m.el.querySelector('form');
+  bindCerrar(m); bindBono(m.el);
+  // Al cambiar el nº de sesiones se propone su precio (el del último bono si no cambia), salvo que ya se haya escrito uno a mano.
+  const ses = form.elements.b_sesiones, pre = form.elements.b_precio;
+  let tocado = false, programatico = false;
+  pre.addEventListener('input', () => { if (!programatico) tocado = true; });
+  const sugerir = () => {
+    const n = Number(ses.value);
+    if (tocado || !(n > 0)) return;
+    programatico = true;
+    pre.value = n === Number(plan.ultimo.sesiones) ? plan.ultimo.precio : precioBonoSugerido(n);
+    pre.dispatchEvent(new Event('input'));
+    programatico = false;
+  };
+  m.el.querySelectorAll('.bono-opt').forEach(b => b.addEventListener('click', sugerir));
+  ses.addEventListener('input', sugerir);
+  alEnviar(m, form, async () => {
+    const val = nuevoValidador(m.el);
+    const sesiones = parseInt(form.elements.b_sesiones.value, 10);
+    const precio = form.elements.b_precio.value === '' ? NaN : Number(form.elements.b_precio.value);
+    val.exige(sesiones > 0, 'b_sesiones', 'sesiones del próximo bono');
+    val.exige(precio >= 0, 'b_precio', 'precio del próximo bono');
+    val.cierra();
+    const igual = sesiones === Number(plan.ultimo.sesiones) && precio === Number(plan.ultimo.precio);
+    await S.api.guardarCliente({ id: c.id, no_renueva: false, proximo_bono_sesiones: igual ? null : sesiones, proximo_bono_precio: igual ? null : precio });
+    m.cerrar();
+    await bus.recargar();
+    toast(igual ? 'Próximo bono: igual que el último' : `Próximo bono: ${sesiones} sesiones · ${fmtEUR(precio)}`);
   });
 }
 

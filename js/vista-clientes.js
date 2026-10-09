@@ -4,10 +4,11 @@ import { esc, abrirModal, dialogo, toast, fmtEUR, fmtFecha, fmtFechaDia, textoDi
 import {
   hoyISO, creditos, consumoPorBono, estadoEfectivo, estadoPago, estadoCobro, edad, camposPendientes, tieneLesionActiva,
   incidenciasCliente, revisionDatos, esDiferido, deudaDiferida, modoDiferido,
+  bonoVigente, planProximoBono, proyectarRenovaciones, primerDiaMes, ultimoDiaMes,
 } from './logica.js';
 import {
   modalCliente, modalConvertir, modalBono, modalEditarBono, modalGenerar, modalCambiarHorario, modalSesion, cambiarEstadoSesion,
-  modalTarifaDiferido, modalCobrarSesiones, modalPagoRecibido, modalModoDiferido,
+  modalTarifaDiferido, modalCobrarSesiones, modalPagoRecibido, modalModoDiferido, modalProximoBono,
 } from './modales.js';
 
 const ETIQUETA = { reservada: 'RESERV.', hecha: 'HECHA', no_vino: 'NO VINO', auto: 'AUTO' };
@@ -147,6 +148,25 @@ function panelDiferidoHTML(c) {
   return `<div class="dif-panel">${cuerpo}</div>`;
 }
 
+// Panel «Renovación» de la ficha: por defecto se da por hecho que el cliente renueva su bono (y entra en la previsión de
+// ingresos del Resumen). Aquí se marca que NO va a renovar o que va a cambiar de bono. Lo puede tocar el entrenador.
+function panelRenovacionHTML(c) {
+  const plan = planProximoBono(c);
+  if (!plan) return '';   // sin ningún bono todavía: nada que renovar
+  if (c.no_renueva) {
+    return `<div class="ren-panel no"><span>🚫 <b>No va a renovar</b> · no cuenta en la previsión de ingresos.</span>
+      <span class="dif-acciones"><button class="btn btn-sm btn-secondary" data-acc="ren-si" data-id="${c.id}">Sí va a renovar</button></span></div>`;
+  }
+  const { filas, sinEstimar } = proyectarRenovaciones([c], hoyISO(), ultimoDiaMes(primerDiaMes(hoyISO(), 36)));
+  const cuando = filas[0] ? `· hacia el <b>${fmtFecha(filas[0].fecha)}</b>` : sinEstimar.length ? '· <span class="hint">(faltan sus días fijos para estimar cuándo)</span>' : '';
+  return `<div class="ren-panel"><span>🔁 <b>Se da por hecho que renueva</b> · próximo bono: <b>${plan.sesiones} ${plan.sesiones === 1 ? 'sesión' : 'sesiones'} · ${fmtEUR(plan.precio)}</b>
+      ${plan.cambiado ? '<span class="chip amarillo">CAMBIA DE BONO</span>' : ''} ${cuando}</span>
+    <span class="dif-acciones">
+      <button class="btn btn-sm btn-secondary" data-acc="ren-cambiar" data-id="${c.id}">Cambiar el próximo bono…</button>
+      ${Number(c.proximo_bono_sesiones) > 0 ? `<button class="btn btn-sm btn-secondary" data-acc="ren-quitar" data-id="${c.id}" title="Vuelve a ser igual que el último bono">Quitar el cambio</button>` : ''}
+      <button class="btn btn-sm btn-secondary" data-acc="ren-no" data-id="${c.id}">No va a renovar</button></span></div>`;
+}
+
 function fichaHTML(c) {
   const efe = c.estado === 'efectivo';
   const dif = efe ? deudaDiferida(c) : null;
@@ -210,8 +230,10 @@ function fichaHTML(c) {
 
   let cuerpo = '';
   if (efe) {
-    const pct = cr.total > 0 ? Math.min(100, (cr.hechas / cr.total) * 100) : 0;
-    const barColor = cr.restantes === 0 ? 'var(--red)' : cr.restantes <= 2 ? 'var(--yellow)' : 'var(--green-light)';
+    // Los cinco números hablan del bono que está gastando ahora (no de la suma de todos los que ha tenido).
+    const vig = bonoVigente(c) || { total: 0, hechas: cr.hechas, reservadas: cr.reservadas, pendReserva: 0, pendRealizar: 0 };
+    const pct = vig.total > 0 ? Math.min(100, (vig.hechas / vig.total) * 100) : 0;
+    const barColor = vig.pendRealizar === 0 ? 'var(--red)' : vig.pendRealizar <= 2 ? 'var(--yellow)' : 'var(--green-light)';
     const CHIP_BONO = { pagado: ['verde', 'PAGADO'], pendiente: ['pendiente', 'PENDIENTE DE PAGO'], programado: ['amarillo', 'PAGO PROGRAMADO'] };
     const consumo = consumoPorBono(c);
     const bonos = [...(c.bonos || [])].sort((a, b) => b.fecha_pago.localeCompare(a.fecha_pago)).map(b => {
@@ -278,13 +300,15 @@ function fichaHTML(c) {
         ${dif.n ? `<div class="dif-pend"><b>Sesiones por cobrar:</b> ${dif.pendientes.map(s => fmtFechaDia(s.fecha)).join(' · ')}</div>` : ''}
       </div>` : `
       <div class="credit-widget">
-        <div class="cw-row">
-          <div class="cw-stat"><div class="cw-num" style="color:var(--green-light)">${cr.restantes}</div><div class="cw-label">Quedan</div></div>
-          <div class="cw-stat"><div class="cw-num" style="color:var(--yellow)">${cr.reservadas}</div><div class="cw-label">Reservadas</div></div>
-          <div class="cw-stat"><div class="cw-num" style="color:var(--red-light)">${cr.hechas}</div><div class="cw-label">Realizadas${cr.sinBono ? ` · <span class="cw-aviso">${cr.sinBono} sin bono</span>` : ''}</div></div>
-          <div class="cw-stat"><div class="cw-num" style="color:#666">${cr.noVino}</div><div class="cw-label">No vino</div></div>
+        <div class="cw-row cw-5">
+          <div class="cw-stat"><div class="cw-num">${vig.total}</div><div class="cw-label">Bono vigente</div></div>
+          <div class="cw-stat"><div class="cw-num" style="color:var(--yellow)">${vig.reservadas}</div><div class="cw-label">Reservadas</div></div>
+          <div class="cw-stat"><div class="cw-num" style="color:var(--blue-light)">${vig.pendReserva}</div><div class="cw-label">Pendientes de reserva</div></div>
+          <div class="cw-stat"><div class="cw-num" style="color:var(--red-light)">${vig.hechas}</div><div class="cw-label">Realizadas${cr.sinBono ? ` · <span class="cw-aviso">${cr.sinBono} sin bono</span>` : ''}</div></div>
+          <div class="cw-stat"><div class="cw-num" style="color:var(--green-light)">${vig.pendRealizar}</div><div class="cw-label">Pendientes de realizar</div></div>
         </div>
         <div class="big-bar"><div class="big-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
+        <div class="cw-sub">No vino: <b>${cr.noVino}</b>${(c.bonos || []).filter(b => b.tipo !== 'cobro' && b.sesiones > 0).length > 1 ? ` · En total ha contratado <b>${cr.total}</b> sesiones y ha hecho <b>${cr.hechas}</b>` : ''}</div>
       </div>`;
     cuerpo = `
       ${widget}
@@ -326,6 +350,7 @@ function fichaHTML(c) {
       <div class="client-actions">${botones}</div>
     </div>
     ${efe && c.activo ? panelDiferidoHTML(c) : ''}
+    ${efe && c.activo && !dif ? panelRenovacionHTML(c) : ''}
     ${cuerpo}`;
 }
 
@@ -423,6 +448,14 @@ async function marcarPagados(bonos, mensaje) {
   toast('Pago confirmado');
 }
 
+async function cambiarRenovacion(t, campos, aviso) {
+  const c = clienteDe(t.dataset.id);
+  if (!c) return;
+  await S.api.guardarCliente({ id: c.id, ...campos });
+  await bus.recargar();
+  toast(aviso);
+}
+
 export const accionesClientes = {
   'cli-sel': t => { S.cliSel = t.dataset.id; bus.repintar(); },
   'cli-volver': () => { S.cliSel = null; bus.repintar(); },
@@ -440,6 +473,11 @@ export const accionesClientes = {
   },
   'cli-cobrar-sesiones': t => modalCobrarSesiones(clienteDe(t.dataset.id)),
   'cli-pago-recibido': t => modalPagoRecibido(clienteDe(t.dataset.id)),
+  // Renovación: por defecto se da por hecho que renueva; aquí se marca que no, o que cambia de bono.
+  'ren-no': t => cambiarRenovacion(t, { no_renueva: true }, 'Marcado: no va a renovar'),
+  'ren-si': t => cambiarRenovacion(t, { no_renueva: false }, 'Vuelve a contar como renovación prevista'),
+  'ren-quitar': t => cambiarRenovacion(t, { proximo_bono_sesiones: null, proximo_bono_precio: null }, 'Próximo bono: igual que el último'),
+  'ren-cambiar': t => modalProximoBono(clienteDe(t.dataset.id)),
   'dif-modo': t => modalModoDiferido(clienteDe(t.dataset.id)),
   'cobro-deshacer': async t => {
     const c = clienteDe(S.cliSel), b = c?.bonos.find(x => x.id === t.dataset.id);
