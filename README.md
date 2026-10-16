@@ -146,6 +146,12 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
 - **Resumen → Facturación prevista**: la fecha de pago de cada bono decide en qué mes cuenta; muestra el total de
   dos meses seguidos (por defecto este y el siguiente; con ◀ ▶ se puede ir hacia atrás, p. ej. para ver lo que se
   cobró en septiembre), desglosado en pagado / pendiente de cobro / programado / **renovación prevista**, con el detalle de cada bono.
+- **Anticipos a los entrenadores** (`sql/18_anticipos_entrenadores.sql`): en Comisiones, cada entrenador tiene una sección «Anticipos
+  entregados» con «+ Registrar anticipo» (importe, fecha en que se le dio, mes de la liquidación del que se descuenta —por defecto el de
+  la fecha— y una nota). Se resta de su comisión de ese mes: el título del entrenador y el «TOTAL A LIQUIDAR» muestran lo que queda por
+  pagar y el subtotal desglosa «Comisión − anticipos = A pagar». Si lo adelantado supera la comisión sale en negativo y con «→ Mes
+  siguiente» se pasa el sobrante a la liquidación siguiente (también se puede editar o borrar). Solo el administrador los gestiona; el
+  entrenador ve los suyos en su pantalla de comisiones (solo lectura).
 - **Renovaciones** (`sql/17_renovaciones.sql`): se da por hecho que **todo cliente con bono renueva** (los que pagan después, los
   potenciales y los archivados no).
   · *Calendario*: la penúltima clase que le cubre el bono lleva ⚡ y la última 🏁 (también en la vista de mes y con texto al pasar el

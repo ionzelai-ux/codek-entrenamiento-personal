@@ -129,6 +129,13 @@ export async function actualizarLineaManual(id, cambios) {
   return comprobar(await sb.from('comisiones_manual').update(cambios).eq('id', id).select().single());
 }
 export async function eliminarLineaManual(id) { comprobar(await sb.from('comisiones_manual').delete().eq('id', id)); }
+// Anticipos a los entrenadores (sql/18_anticipos_entrenadores.sql): el administrador los gestiona; cada entrenador ve los suyos.
+export async function listarAnticipos() { return comprobar(await sb.from('comisiones_anticipos').select('*').order('fecha').order('created_at')); }
+export async function crearAnticipo(a) { return comprobar(await sb.from('comisiones_anticipos').insert(a).select().single()); }
+export async function actualizarAnticipo(id, cambios) {
+  return comprobar(await sb.from('comisiones_anticipos').update(cambios).eq('id', id).select().single());
+}
+export async function eliminarAnticipo(id) { comprobar(await sb.from('comisiones_anticipos').delete().eq('id', id)); }
 // Upsert parcial: solo se guarda lo que cambia (ver sql/08_comisiones.sql), el otro campo del bono no se toca.
 export async function guardarOverrideComision(bono_id, cambios) {
   return comprobar(await sb.from('comisiones_bono').upsert({ bono_id, ...cambios }, { onConflict: 'bono_id' }).select().single());

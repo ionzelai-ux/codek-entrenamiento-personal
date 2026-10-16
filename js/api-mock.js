@@ -262,6 +262,35 @@ export async function eliminarLineaManual(id) {
   if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
   comisionesManual.splice(comisionesManual.findIndex(x => x.id === id), 1);
 }
+// Anticipos a los entrenadores (como sql/18): el administrador los gestiona; cada entrenador solo ve los suyos.
+const anticipos = [];
+export async function listarAnticipos() {
+  return anticipos.filter(a => actual.rol === 'admin' || a.entrenador_id === actual.id).map(clonar);
+}
+function comprobarAnticipo(a) {
+  if (!(Number(a.importe) > 0)) throw new Error('new row for relation "comisiones_anticipos" violates check constraint "comisiones_anticipos_importe_check"');
+  if (!/^\d{4}-\d{2}$/.test(a.mes || '')) throw new Error('new row for relation "comisiones_anticipos" violates check constraint "comisiones_anticipos_mes_check"');
+}
+export async function crearAnticipo(a) {
+  if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
+  const n = { id: nuevoId(), fecha: hoyISO(), concepto: '', ...a };
+  comprobarAnticipo(n);
+  anticipos.push(n);
+  return clonar(n);
+}
+export async function actualizarAnticipo(id, cambios) {
+  if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
+  const n = anticipos.find(x => x.id === id);
+  if (!n) throw new Error('Anticipo no encontrado');
+  const nuevo = { ...n, ...cambios };
+  comprobarAnticipo(nuevo);
+  Object.assign(n, cambios);
+  return clonar(n);
+}
+export async function eliminarAnticipo(id) {
+  if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
+  anticipos.splice(anticipos.findIndex(x => x.id === id), 1);
+}
 export async function guardarOverrideComision(bono_id, cambios) {
   if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
   let o = comisionesBono.find(x => x.bono_id === bono_id);

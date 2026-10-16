@@ -9,9 +9,10 @@
 // para ver cómo salen los números, pero NADA de lo que cambie se guarda («↺ Restablecer» vuelve a lo del administrador).
 import { S, bus, esAdmin, puedeVerComisiones, entrenadorDe, nombreCompleto, entrenadorFiltroId } from './store.js';
 import { esc, fmtEUR, fmtFecha, nombreMes, etiquetaMetodo, toast, dialogo, filtroEntrenadorHTML } from './util.js';
+import { modalAnticipo } from './modales.js';
 import {
   hoyISO, primerDiaMes, liquidacionMes, lineasManualesMes, totalesComisiones, entrenadoresConComision,
-  DEFAULT_CONFIG_COMISIONES,
+  anticiposDelMes, totalAnticipos, importeAPagar, DEFAULT_CONFIG_COMISIONES,
 } from './logica.js';
 
 export async function cargarComisiones() {
@@ -32,6 +33,9 @@ export async function cargarComisiones() {
   // Las líneas manuales van aparte: si aún no se ha ejecutado sql/12, el resto de la pantalla sigue funcionando.
   try { S.comisiones.libres = await S.api.listarLineasManuales(); }
   catch (e) { S.comisiones.libres = []; if (admin) toast(`Ajustes manuales no disponibles: ${e.message}`, true); }
+  // Igual con los anticipos (sql/18): si aún no existe la tabla, lo demás sigue funcionando.
+  try { S.comisiones.anticipos = await S.api.listarAnticipos(); }
+  catch (e) { S.comisiones.anticipos = []; if (admin) toast(`Anticipos no disponibles: ${e.message}`, true); }
   S.comisiones.cargando = false;
   S.comisiones.cargado = true;
   bus.repintar();
@@ -45,7 +49,8 @@ function datos() {
   const overridesObj = Object.fromEntries(S.comisiones.overrides);
   const filas = liquidacionMes(S.clientes.filter(c => visible(c.entrenador_id)), S.comisiones.mes, config, overridesObj);
   const lineas = lineasManualesMes(filas, S.comisiones.libres.filter(l => visible(l.entrenador_id)), S.comisiones.mes, config, overridesObj);
-  return { config, filtro, filas, lineas, entrenadores: S.entrenadores.filter(e => visible(e.id)) };
+  const anticipos = anticiposDelMes(S.comisiones.anticipos, S.comisiones.mes).filter(a => visible(a.entrenador_id));
+  return { config, filtro, filas, lineas, anticipos, entrenadores: S.entrenadores.filter(e => visible(e.id)) };
 }
 
 const plural = (n, uno, varios) => (n === 1 ? uno : varios);
@@ -120,30 +125,54 @@ function seccionManualHTML(entrenadorId, lineas) {
     <button class="btn btn-secondary btn-sm" style="margin-top:8px" data-acc="com-man-nueva" data-ent="${entrenadorId}">+ Añadir línea manual</button>`;
 }
 
-const subtotalHTML = t => `<div class="com-subtotal">Facturado ${fmtEUR(t.importe)} · Comisión total <b>${fmtEUR(t.comision)}</b>
-  (efectivo ${fmtEUR(t.efectivo)} · nómina ${fmtEUR(t.nomina)}) · ${t.n} ${plural(t.n, 'bono', 'bonos')}${t.manuales
-    ? ` · <span class="com-aviso">${t.manuales} ${plural(t.manuales, 'ajuste manual', 'ajustes manuales')}: ${fmtEUR(t.comisionManual)}</span>` : ''}</div>`;
+// ── Anticipos ─────────────────────────────────────────────────────────────
+// Dinero adelantado al entrenador: se resta de su comisión del mes en que se descuenta. Solo el administrador los gestiona;
+// el entrenador ve los suyos (no se pueden tocar ni en su simulación: son hechos, no pruebas).
+function seccionAnticiposHTML(entrenadorId, lista) {
+  const admin = esAdmin();
+  const tabla = lista.length
+    ? `<div class="tabla-wrap"><table class="tabla tabla-com"><thead><tr><th class="num">Fecha</th><th>Nota</th><th>Se descuenta de</th><th class="num">Importe</th>${admin ? '<th></th>' : ''}</tr></thead><tbody>
+      ${lista.map(a => `<tr><td class="num">${fmtFecha(a.fecha)}</td><td>${esc(a.concepto || 'Anticipo')}</td><td>${esc(nombreMes(a.mes))}</td>
+        <td class="num" style="color:var(--red-light)"><b>−${fmtEUR(a.importe)}</b></td>
+        ${admin ? `<td class="com-man-accion"><button class="btn btn-sm btn-secondary" data-acc="com-ant-pasar" data-id="${a.id}" title="Descontarlo en la liquidación del mes siguiente">→ Mes siguiente</button>
+          <button class="sess-del" data-acc="com-ant-editar" data-id="${a.id}" title="Editar anticipo" aria-label="Editar anticipo">✎</button>
+          <button class="sess-del" data-acc="com-ant-borrar" data-id="${a.id}" title="Eliminar anticipo" aria-label="Eliminar anticipo">✕</button></td>` : ''}</tr>`).join('')}
+      </tbody></table></div>`
+    : `<div class="hint">${admin ? 'Aquí aparece el dinero que le adelantes en efectivo o como sea, para restarlo de su comisión.' : 'Sin anticipos este mes.'}</div>`;
+  return `<div class="section-mini com-man-titulo">Anticipos entregados</div>${tabla}
+    ${admin ? `<button class="btn btn-secondary btn-sm" style="margin-top:8px" data-acc="com-ant-nuevo" data-ent="${entrenadorId}">+ Registrar anticipo</button>` : ''}`;
+}
 
-function grupoHTML(e, filas, lineas) {
+const subtotalHTML = (t, anticipos) => {
+  const ant = totalAnticipos(anticipos), apagar = importeAPagar(t.comision, anticipos);
+  return `<div class="com-subtotal">Facturado ${fmtEUR(t.importe)} · Comisión total <b>${fmtEUR(t.comision)}</b>
+  (efectivo ${fmtEUR(t.efectivo)} · nómina ${fmtEUR(t.nomina)}) · ${t.n} ${plural(t.n, 'bono', 'bonos')}${t.manuales
+    ? ` · <span class="com-aviso">${t.manuales} ${plural(t.manuales, 'ajuste manual', 'ajustes manuales')}: ${fmtEUR(t.comisionManual)}</span>` : ''}${ant
+    ? `<br>Anticipos ya entregados <b style="color:var(--red-light)">−${fmtEUR(ant)}</b> · <b>A pagar: ${fmtEUR(apagar)}</b>${apagar < 0
+      ? ` <span class="com-aviso">· Se le ha adelantado más de lo que cobra este mes: pasa el sobrante al mes siguiente con «→ Mes siguiente» o ajusta el anticipo.</span>` : ''}` : ''}</div>`;
+};
+
+function grupoHTML(e, filas, lineas, anticipos) {
   const t = totalesComisiones(filas, lineas);
   return `<div class="com-grupo">
     <div class="com-grupo-title"><i class="tc" style="background:${e.color || '#888'}"></i>${esc(e.nombre)}
-      <span class="com-grupo-total">${fmtEUR(t.comision)}</span></div>
+      <span class="com-grupo-total" title="${anticipos.length ? 'Comisión menos anticipos' : 'Comisión'}">${fmtEUR(importeAPagar(t.comision, anticipos))}</span></div>
     ${tablaFilasHTML(filas.filter(f => !f.excluido))}
     ${seccionManualHTML(e.id, lineas)}
-    ${subtotalHTML(t)}
+    ${seccionAnticiposHTML(e.id, anticipos)}
+    ${subtotalHTML(t, anticipos)}
   </div>`;
 }
 
 function resultadoHTML() {
-  const { filtro, filas, lineas, entrenadores } = datos();
+  const { filtro, filas, lineas, anticipos, entrenadores } = datos();
   if (filtro && !entrenadoresConComision(S.entrenadores).some(e => e.id === filtro)) {
     return `<div class="vacio">${esc(entrenadorDe(filtro)?.nombre || 'Este entrenador')} no está, por ahora, en el sistema de comisiones.</div>`;
   }
-  const grupos = entrenadores.map(e => grupoHTML(e, filas.filter(f => f.cliente.entrenador_id === e.id), lineas.filter(l => l.entrenador_id === e.id)));
+  const grupos = entrenadores.map(e => grupoHTML(e, filas.filter(f => f.cliente.entrenador_id === e.id), lineas.filter(l => l.entrenador_id === e.id), anticipos.filter(a => a.entrenador_id === e.id)));
   if (filtro) return grupos.join('');
   return `${grupos.join('')}
-    <div class="com-total-general">TOTAL A LIQUIDAR <span>${fmtEUR(totalesComisiones(filas, lineas).comision)}</span></div>`;
+    <div class="com-total-general">TOTAL A LIQUIDAR <span>${fmtEUR(importeAPagar(totalesComisiones(filas, lineas).comision, anticipos))}</span></div>`;
 }
 
 // Repinta resultados sin que se note: conserva el campo en el que se está escribiendo (con lo escrito tal cual,
@@ -308,6 +337,27 @@ export const accionesComisiones = {
     if (!ok) return;
     if (esAdmin()) await S.api.eliminarLineaManual(id);
     S.comisiones.libres = S.comisiones.libres.filter(x => x.id !== id);
+    refrescarTabla();
+  },
+  // Anticipos a los entrenadores (solo administrador)
+  'com-ant-nuevo': t => modalAnticipo(t.dataset.ent),
+  'com-ant-editar': t => { const a = S.comisiones.anticipos.find(x => x.id === t.dataset.id); if (a) modalAnticipo(a.entrenador_id, a); },
+  'com-ant-pasar': async t => {
+    const a = S.comisiones.anticipos.find(x => x.id === t.dataset.id);
+    if (!a || !esAdmin()) return;
+    const mes = primerDiaMes(a.mes + '-01', 1).slice(0, 7);
+    const guardado = await S.api.actualizarAnticipo(a.id, { mes });
+    S.comisiones.anticipos = S.comisiones.anticipos.map(x => (x.id === a.id ? guardado : x));
+    refrescarTabla();
+    toast(`Anticipo de ${fmtEUR(a.importe)} pasado a ${nombreMes(mes)}`);
+  },
+  'com-ant-borrar': async t => {
+    const a = S.comisiones.anticipos.find(x => x.id === t.dataset.id);
+    if (!a || !esAdmin()) return;
+    const ok = await dialogo({ titulo: 'Eliminar anticipo', mensaje: `<p>¿Eliminar el anticipo de <b>${fmtEUR(a.importe)}</b> del ${fmtFecha(a.fecha)}? Dejará de restarse de su comisión. No se puede deshacer.</p>`, ok: 'Eliminar', peligro: true });
+    if (!ok) return;
+    await S.api.eliminarAnticipo(a.id);
+    S.comisiones.anticipos = S.comisiones.anticipos.filter(x => x.id !== a.id);
     refrescarTabla();
   },
   // Entrenador: vuelve a lo que ha decidido el administrador (borra solo sus pruebas)

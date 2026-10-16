@@ -64,7 +64,7 @@ const GLOBALES = {
   salir: async () => {
     await S.api.cerrarSesion();
     Object.assign(S, { perfil: null, clientes: [], entrenadores: [], cliSel: null, filtroEntr: 'todos' });
-    S.comisiones = { mes: hoyISO().slice(0, 7), config: null, overrides: new Map(), libres: [], cargando: false, cargado: false };
+    S.comisiones = { mes: hoyISO().slice(0, 7), config: null, overrides: new Map(), libres: [], anticipos: [], cargando: false, cargado: false };
     vistaEl.innerHTML = '';
     mostrarLogin();
   },

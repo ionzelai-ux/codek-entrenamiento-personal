@@ -661,6 +661,17 @@ export function totalesComisiones(filas, lineas = []) {
   return t;
 }
 
+// ── Anticipos a los entrenadores ──────────────────────────────────────────
+// Dinero que se le adelanta a un entrenador (p. ej. 200 € en efectivo). Cada anticipo se descuenta de la liquidación del mes
+// `mes` ('AAAA-MM'; por defecto el de su fecha). Si lo adelantado supera la comisión de ese mes, el sobrante sale en negativo y
+// se pasa a otro mes cambiando su `mes`. anticipo = { entrenador_id, fecha, mes, importe, concepto }.
+export const anticiposDelMes = (anticipos, mes) => (anticipos || []).filter(a => a.mes === mes);
+export const totalAnticipos = lista => redondeo((lista || []).reduce((t, a) => t + (Number(a.importe) || 0), 0));
+// Lo que queda por pagar al entrenador: comisión del mes − anticipos que se le descuentan ese mes.
+export const importeAPagar = (comision, anticipos) => redondeo(comision - totalAnticipos(anticipos));
+// Mes en el que cae una fecha ISO ('2026-10-16' → '2026-10').
+export const mesDeFecha = fecha => String(fecha || '').slice(0, 7);
+
 // Entrenadores que participan en el sistema de comisiones (`aplica_comisiones` es true por defecto;
 // se puede desactivar uno concreto sin que deje de funcionar en el resto de la app).
 export const entrenadoresConComision = entrenadores => entrenadores.filter(e => e.aplica_comisiones !== false);

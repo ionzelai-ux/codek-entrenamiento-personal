@@ -1,12 +1,12 @@
 // Formularios en modal: sesión, ficha de cliente, convertir potencial, nuevo bono y
 // generación de sesiones desde días fijos (con aviso de solapes).
 import { S, bus, esAdmin, entrenadorDe, nombreCompleto, clienteDe, entrenadorFiltroId } from './store.js';
-import { esc, abrirModal, dialogo, errorEnModal, toast, fmtFechaDia, fmtEUR, DIAS_SEM, textoDias, METODOS_PAGO } from './util.js';
+import { esc, abrirModal, dialogo, errorEnModal, toast, fmtFechaDia, fmtEUR, nombreMes, DIAS_SEM, textoDias, METODOS_PAGO } from './util.js';
 import {
   hoyISO, precioBonoSugerido, precioHoraSugerido, buscarConflictos, generarFechas,
   creditos, estadoEfectivo, ocupaCredito, diaSemana,
   sesionesCambiables, horaNueva, planCambioHorario, diasFijosActualizados,
-  esDiferido, deudaDiferida, planCobroSesiones, planPagoRecibido, modoDiferido, planProximoBono,
+  esDiferido, deudaDiferida, planCobroSesiones, planPagoRecibido, modoDiferido, planProximoBono, mesDeFecha,
 } from './logica.js';
 import { OPCIONES_BONO, DURACION_SESION_MIN } from './config.js';
 
@@ -516,6 +516,54 @@ export function modalBono(c) {
     await bus.recargar();
     toast('Bono añadido');
     if (generar) modalGenerar(clienteDe(c.id), { bono: creado, cantidad: creado.sesiones });
+  });
+}
+
+// ── Anticipo a un entrenador (solo administrador): dinero que se le ha adelantado y se resta de sus comisiones ──
+// `anticipo` = null para uno nuevo, o el que se edita. Se guarda en S.comisiones.anticipos y se repinta la pestaña.
+export function modalAnticipo(entrenadorId, anticipo = null) {
+  if (!esAdmin()) return;
+  const quien = entrenadorDe(entrenadorId)?.nombre || 'el entrenador';
+  const fecha0 = anticipo?.fecha || hoyISO();
+  const m = abrirModal(`
+    <div class="modal-title">${anticipo ? 'Editar anticipo' : 'Anticipo a cuenta'}</div>
+    <p class="sub">${esc(quien)} · se resta de sus comisiones</p>
+    <form novalidate>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Importe entregado (€) *</label>
+          <input class="form-input" name="importe" type="text" inputmode="decimal" autocomplete="off" placeholder="p. ej. 200" value="${esc(anticipo?.importe ?? '')}"></div>
+        <div class="form-group"><label class="form-label">Fecha en que se le dio *</label>
+          <input class="form-input" name="fecha" type="date" value="${esc(fecha0)}"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Se descuenta de la liquidación de *</label>
+          <input class="form-input" name="mes" type="month" value="${esc(anticipo?.mes || mesDeFecha(fecha0))}">
+          <div class="hint">Por defecto, el mes de la fecha. Si adelantas más de lo que cobra ese mes, pásalo al siguiente.</div></div>
+        <div class="form-group"><label class="form-label">Nota</label>
+          <input class="form-input" name="concepto" type="text" autocomplete="off" placeholder="p. ej. anticipo en efectivo" value="${esc(anticipo?.concepto || '')}"></div>
+      </div>
+      ${acciones(anticipo ? 'Guardar cambios' : 'Registrar anticipo')}
+    </form>`, 'modal-lg');
+  const form = m.el.querySelector('form');
+  bindCerrar(m);
+  // Mientras no se toque el mes a mano, sigue al mes de la fecha elegida.
+  let mesManual = !!anticipo && anticipo.mes !== mesDeFecha(anticipo.fecha);
+  form.elements.mes.addEventListener('input', () => { mesManual = true; });
+  form.elements.fecha.addEventListener('input', () => { if (!mesManual && form.elements.fecha.value) form.elements.mes.value = mesDeFecha(form.elements.fecha.value); });
+  alEnviar(m, form, async () => {
+    const val = nuevoValidador(m.el);
+    const t = form.elements.importe.value.trim().replace(',', '.'), importe = t === '' ? NaN : Number(t);
+    val.exige(Number.isFinite(importe) && importe > 0, 'importe', 'importe entregado');
+    val.exige(form.elements.fecha.value, 'fecha', 'fecha');
+    val.exige(/^\d{4}-\d{2}$/.test(form.elements.mes.value), 'mes', 'mes de descuento');
+    val.cierra();
+    const datos = { entrenador_id: entrenadorId, fecha: form.elements.fecha.value, mes: form.elements.mes.value,
+      importe: Math.round(importe * 100) / 100, concepto: form.elements.concepto.value.trim() };
+    const guardado = anticipo ? await S.api.actualizarAnticipo(anticipo.id, datos) : await S.api.crearAnticipo(datos);
+    S.comisiones.anticipos = anticipo ? S.comisiones.anticipos.map(a => (a.id === anticipo.id ? guardado : a)) : [...S.comisiones.anticipos, guardado];
+    m.cerrar();
+    bus.repintar();
+    toast(`Anticipo de ${fmtEUR(datos.importe)} a ${quien} · se descuenta en ${nombreMes(datos.mes)}`);
   });
 }
 
