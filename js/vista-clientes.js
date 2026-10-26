@@ -5,11 +5,12 @@ import {
   hoyISO, creditos, consumoPorBono, estadoEfectivo, estadoPago, estadoCobro, edad, camposPendientes, tieneLesionActiva,
   incidenciasCliente, revisionDatos, esDiferido, deudaDiferida, modoDiferido,
   bonoVigente, planProximoBono, proyectarRenovaciones, primerDiaMes, ultimoDiaMes,
-  cobroAvisado, bonosAvisados, resumenPorValidar,
+  cobroAvisado, bonosAvisados, resumenPorValidar, avisosDiferido,
 } from './logica.js';
 import {
   modalCliente, modalConvertir, modalBono, modalEditarBono, modalGenerar, modalCambiarHorario, modalSesion, cambiarEstadoSesion,
   modalTarifaDiferido, modalCobrarSesiones, modalPagoRecibido, modalModoDiferido, modalProximoBono, modalAvisarCobro, modalValidarCobro,
+  modalAvisarCobroDiferido, modalValidarAvisoDiferido,
 } from './modales.js';
 
 const ETIQUETA = { reservada: 'RESERV.', hecha: 'HECHA', no_vino: 'NO VINO', auto: 'AUTO' };
@@ -33,7 +34,7 @@ function filtrados() {
       if (f === 'todos') return true;
       if (f === 'solicitud') return c.pago_diferido === 'solicitado';                     // solicitudes de «paga después» por aprobar
       if (f === 'deuda') return !!deudaDiferida(c)?.debe;                                // aprobados con algo por cobrar
-      if (f === 'validar') return bonosAvisados(c).length > 0;                            // cobros que ha avisado el entrenador y faltan por validar
+      if (f === 'validar') return bonosAvisados(c).length > 0 || avisosDiferido(c).length > 0;   // cobros que ha avisado el entrenador y faltan por validar
       return estadoCobro(c, hoy)?.clave === f;
     })
     .sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es'));
@@ -83,6 +84,26 @@ function avisoCobroHTML(c) {
     : `<button class="btn btn-sm btn-secondary" data-acc="cob-deshacer-aviso" data-id="${c.id}" title="Quitar el aviso: el bono vuelve a quedar sin cobrar">Deshacer aviso</button>`;
   return `<div class="pago-row"><span class="chip por-validar">COBRO POR VALIDAR</span><span class="pago-txt">${texto}</span>${boton}</div>`;
 }
+// Cobros avisados de un cliente que paga después: una fila por aviso (el administrador valida; el entrenador puede deshacerlo).
+const textoAvisoDif = a => `${esc(entrenadorDe(a.avisado_por)?.nombre || 'El entrenador')} cobró <b>${fmtEUR(a.importe)}</b> el ${fmtFecha(a.fecha)} (${esc(etiquetaMetodo(a.metodo))})${(a.sesion_ids || []).length ? ` · ${a.sesion_ids.length} ${a.sesion_ids.length === 1 ? 'sesión' : 'sesiones'}` : ''}`;
+function avisosDifHTML(c) {
+  return avisosDiferido(c).map(a => {
+    const boton = esAdmin()
+      ? `<button class="btn btn-sm btn-cobrar" data-acc="cobd-validar" data-id="${a.id}" data-cliente="${c.id}" title="Revisar y confirmar el cobro que avisó el entrenador">✓ Validar</button>`
+      : `<button class="btn btn-sm btn-secondary" data-acc="cobd-deshacer" data-id="${a.id}" title="Quitar el aviso">Deshacer aviso</button>`;
+    return `<div class="pago-row"><span class="chip por-validar">COBRO POR VALIDAR</span><span class="pago-txt">${textoAvisoDif(a)}</span>${boton}</div>`;
+  }).join('');
+}
+// ¿Puede el entrenador avisar de un cobro de este cliente que paga después? «A cuenta» siempre; «por sesión» si hay sesiones sin avisar.
+function puedeAvisarDif(c) {
+  const d = deudaDiferida(c);
+  if (!d || esAdmin()) return false;
+  if (d.modo === 'cuenta') return true;
+  const yaAvisadas = new Set(avisosDiferido(c).flatMap(a => a.sesion_ids || []));
+  return d.pendientes.some(s => !yaAvisadas.has(s.id));
+}
+const botonAvisarDif = c => `<button class="btn btn-sm btn-cobrar" data-acc="cob-avisar-dif" data-id="${c.id}" title="Apuntar que el cliente te ha pagado: lo valida el administrador">💶 Avisar cobro</button>`;
+
 function pagoHTML(c) {
   const e = estadoCobro(c, hoyISO());
   if (!e || e.clave === 'sin_bono') return '';
@@ -118,7 +139,7 @@ function itemHTML(c) {
       ? (dif.debe ? `debe <b>${dif.importe === null ? 'sin tarifa' : fmtEUR(dif.importe)}</b> · ${dif.n} ${dif.n === 1 ? 'sesión' : 'sesiones'} · pagado ${fmtEUR(dif.pagado)}`
         : dif.aFavor > 0 ? `saldo a favor <b>${fmtEUR(dif.aFavor)}</b>` : 'al día ✓')
       : (dif.debe ? `debe <b>${dif.n}</b> ${dif.n === 1 ? 'sesión' : 'sesiones'}${dif.importe === null ? ' · sin tarifa' : ` · <b>${fmtEUR(dif.importe)}</b>`}` : 'al día ✓');
-    extra = `<div class="pago-row"><span class="pago-txt">${texto}${dif.reservadas ? ` · ${dif.reservadas}🟡` : ''}</span></div>`;
+    extra = `<div class="pago-row"><span class="pago-txt">${texto}${dif.reservadas ? ` · ${dif.reservadas}🟡` : ''}</span>${puedeAvisarDif(c) ? botonAvisarDif(c) : ''}</div>${avisosDifHTML(c)}`;
   } else if (c.estado === 'efectivo') {
     const cr = creditos(c);
     if (!cr.total) extra = `<div class="credit-text">Sin bono${cr.hechas ? ` · ${cr.hechas} hechas` : ''}</div>`;
@@ -227,10 +248,15 @@ function fichaHTML(c) {
           : dif.debe ? `debe <b>${fmtEUR(dif.importe)}</b>: ${dif.n} ${dif.n === 1 ? 'sesión' : 'sesiones'} × ${fmtEUR(dif.tarifa)} = ${fmtEUR(dif.valor)} − ${fmtEUR(dif.pagado)} pagado`
           : dif.aFavor > 0 ? `tiene un saldo a favor de <b>${fmtEUR(dif.aFavor)}</b> (ha pagado más de lo que lleva hecho)` : 'está al día, no debe nada')
         : (dif.debe ? `debe <b>${dif.n}</b> ${dif.n === 1 ? 'sesión' : 'sesiones'}${dif.importe === null ? ' (falta indicar su tarifa por sesión)' : ` (${fmtEUR(dif.importe)} a ${fmtEUR(dif.tarifa)}/sesión)`}` : 'no debe nada ahora mismo');
-      const boton = !esAdmin() ? ''
+      const boton = !esAdmin() ? (puedeAvisarDif(c) ? botonAvisarDif(c) : '')
         : cuenta ? `<button class="btn btn-sm btn-cobrar" data-acc="cli-pago-recibido" data-id="${c.id}">💶 Pago recibido…</button>`
         : dif.n ? `<button class="btn btn-sm btn-cobrar" data-acc="cli-cobrar-sesiones" data-id="${c.id}">💶 Marcar como cobradas…</button>` : '';
       alertas += `<div class="alert alert-diferido alert-flex"><span>💶 <b>PAGA DESPUÉS${cuenta ? ' · A CUENTA' : ''}</b> — ${texto}.</span>${boton}</div>`;
+      for (const a of avisosDiferido(c)) {
+        alertas += `<div class="alert alert-por-validar alert-flex"><span>🔔 <b>COBRO POR VALIDAR</b> — ${textoAvisoDif(a)}.${esAdmin() ? '' : ' Pendiente de que lo valide el administrador.'}</span>
+          ${esAdmin() ? `<button class="btn btn-sm btn-cobrar" data-acc="cobd-validar" data-id="${a.id}" data-cliente="${c.id}">✓ Validar cobro</button>`
+            : `<button class="btn btn-sm btn-secondary" data-acc="cobd-deshacer" data-id="${a.id}">Deshacer aviso</button>`}</div>`;
+      }
     } else if (!cr.total) alertas += '<div class="alert alert-warn">Sin bono: añade uno para poder registrar sesiones.</div>';
     else if (cr.restantes === 0) alertas += '<div class="alert alert-danger">⚠ BONO AGOTADO — el cliente necesita renovar.</div>';
     else if (cr.restantes <= 2) alertas += `<div class="alert alert-warn">⚡ Solo quedan ${cr.restantes} sesión${cr.restantes === 1 ? '' : 'es'} — avisa al cliente.</div>`;
@@ -554,6 +580,17 @@ export const accionesClientes = {
     if (b) modalAvisarCobro(c, [b]);
   },
   'cob-validar': t => modalValidarCobro(clienteDe(t.dataset.id)),
+  // Lo mismo para los clientes que pagan después (sql/20)
+  'cob-avisar-dif': t => modalAvisarCobroDiferido(clienteDe(t.dataset.id)),
+  'cobd-validar': t => {
+    const c = clienteDe(t.dataset.cliente);
+    modalValidarAvisoDiferido(c, avisosDiferido(c).find(a => a.id === t.dataset.id));
+  },
+  'cobd-deshacer': async t => {
+    await S.api.eliminarCobroAvisado(t.dataset.id);
+    await bus.recargar();
+    toast('Aviso quitado');
+  },
   'cob-deshacer-aviso': async t => {
     const c = clienteDe(t.dataset.id);
     if (!c) return;

@@ -163,17 +163,19 @@ export const bonosAvisados = c => (c.bonos || []).filter(cobroAvisado);
 // Bonos que un entrenador todavía puede avisar como cobrados: normales, sin pagar y sin aviso (los más antiguos primero).
 export const bonosAvisables = c => (c.bonos || []).filter(b => !b.pagado_el && !cobroAvisado(b) && b.tipo !== 'cobro' && Number(b.sesiones) > 0)
   .sort((a, b) => String(a.fecha_pago).localeCompare(String(b.fecha_pago)));
-// Todo lo que está por validar: { n: bonos, importe, filas: [{ cliente, bonos }] } (solo clientes activos).
+// Avisos de cobro de un cliente que paga después (sql/20): { importe, fecha, metodo, sesion_ids, avisado_por }. Van en `cliente.avisos`.
+export const avisosDiferido = c => (c?.avisos || []);
+// Todo lo que está por validar: { n: avisos de bonos + de «paga después», importe, filas: [{ cliente, bonos, avisos }] } (solo clientes activos).
 export function resumenPorValidar(clientes) {
   const filas = [];
   let n = 0, importe = 0;
   for (const cliente of clientes) {
     if (cliente.activo === false) continue;
-    const bonos = bonosAvisados(cliente);
-    if (!bonos.length) continue;
-    filas.push({ cliente, bonos });
-    n += bonos.length;
-    importe += bonos.reduce((t, b) => t + (Number(b.precio) || 0), 0);
+    const bonos = bonosAvisados(cliente), avisos = avisosDiferido(cliente);
+    if (!bonos.length && !avisos.length) continue;
+    filas.push({ cliente, bonos, avisos });
+    n += bonos.length + avisos.length;
+    importe += bonos.reduce((t, b) => t + (Number(b.precio) || 0), 0) + avisos.reduce((t, a) => t + (Number(a.importe) || 0), 0);
   }
   return { n, importe: redondeo(importe), filas };
 }

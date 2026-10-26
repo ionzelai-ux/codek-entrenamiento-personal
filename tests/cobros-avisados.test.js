@@ -1,7 +1,7 @@
 // Cobros que avisa el entrenador y valida el administrador.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cobroAvisado, bonosAvisados, bonosAvisables, resumenPorValidar, cambiosValidarCobro, estadoPago } from '../js/logica.js';
+import { cobroAvisado, bonosAvisados, bonosAvisables, resumenPorValidar, cambiosValidarCobro, estadoPago, avisosDiferido } from '../js/logica.js';
 
 const b = (id, precio, extra = {}) => ({ id, sesiones: 4, precio, fecha_pago: '2026-10-20', fecha_inicio: '2026-10-20', tipo: 'bono', metodo_pago: 'tarjeta', pagado_el: null, ...extra });
 const cli = (id, bonos, extra = {}) => ({ id, nombre: id, activo: true, estado: 'efectivo', bonos, ...extra });
@@ -37,6 +37,17 @@ test('resumen por validar: nº de bonos, importe y clientes; los archivados no c
   assert.equal(r.importe, 756);
   assert.deepEqual(r.filas.map(f => f.cliente.id), ['a', 'z']);
   assert.deepEqual(resumenPorValidar([sin]), { n: 0, importe: 0, filas: [] });
+});
+
+test('resumen por validar: también cuentan los avisos de los clientes que pagan después', () => {
+  const a = cli('a', [b('a1', 180, { cobro_avisado_el: '2026-10-24' })], { avisos: [{ id: 'x1', importe: 40, fecha: '2026-10-26', metodo: 'tarjeta', sesion_ids: ['s1'] }] });
+  const z = cli('z', [], { pago_diferido: 'aprobado', avisos: [{ id: 'x2', importe: 100.5, fecha: '2026-10-26', metodo: 'efectivo', sesion_ids: [] }] });
+  const r = resumenPorValidar([a, z, cli('s', [b('s1', 50)])]);
+  assert.equal(r.n, 3);
+  assert.equal(r.importe, 320.5);
+  assert.deepEqual(r.filas.map(f => [f.cliente.id, f.bonos.length, f.avisos.length]), [['a', 1, 1], ['z', 0, 1]]);
+  assert.deepEqual(avisosDiferido(z).map(x => x.id), ['x2']);
+  assert.deepEqual(avisosDiferido({}), []);
 });
 
 test('validar: queda pagado el día que recibió el dinero y con el método real; el administrador puede cambiar ambos', () => {

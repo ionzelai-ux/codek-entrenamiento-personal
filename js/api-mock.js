@@ -357,3 +357,35 @@ export async function registrarCobroSesiones({ bono, sesionIds }) {
   return clonar(creado);
 }
 export async function eliminarSesion(id) { sesiones.splice(sesiones.findIndex(s => s.id === id), 1); }
+
+// Avisos de cobro de clientes que pagan después (como sql/20): el entrenador avisa de los suyos; el administrador los valida o rechaza.
+const cobrosAvisados = [];
+export async function listarCobrosAvisados() {
+  const ids = idsVisibles();
+  return cobrosAvisados.filter(a => ids.has(a.cliente_id)).map(clonar);
+}
+export async function crearCobroAvisado(a) {
+  const c = clientes.find(x => x.id === a.cliente_id);
+  if (!c || !idsVisibles().has(c.id)) throw new Error('Cliente no encontrado');
+  const n = { id: nuevoId(), sesion_ids: [], avisado_por: actual.id, creado_en: new Date().toISOString(), ...a };
+  n.avisado_por = actual.id;
+  if (!(Number(n.importe) > 0)) throw new Error('new row for relation "cobros_avisados" violates check constraint "cobros_avisados_importe_check"');
+  if (actual.rol !== 'admin') {
+    if (c.pago_diferido !== 'aprobado') throw new Error('Solo se puede avisar del cobro de un cliente que entrena y paga después');
+    if (n.fecha > hoyISO()) throw new Error('La fecha en que recibiste el cobro no puede ser futura');
+    if ((c.pago_diferido_modo || 'sesion') === 'cuenta') {
+      if (n.sesion_ids.length) throw new Error('En un cliente «a cuenta» no se eligen sesiones: solo el importe, la fecha y el método');
+    } else {
+      if (!n.sesion_ids.length) throw new Error('Elige qué sesiones te ha pagado');
+      const ok = n.sesion_ids.every(id => sesiones.some(s => s.id === id && s.cliente_id === c.id && !s.cobro_bono_id));
+      if (!ok) throw new Error('Alguna sesión no es de este cliente o ya está cobrada');
+    }
+  }
+  cobrosAvisados.push(n);
+  return clonar(n);
+}
+export async function eliminarCobroAvisado(id) {
+  const i = cobrosAvisados.findIndex(a => a.id === id);
+  if (i < 0 || !idsVisibles().has(cobrosAvisados[i].cliente_id)) throw new Error('No se ha podido quitar el aviso (puede que ya no exista).');
+  cobrosAvisados.splice(i, 1);
+}

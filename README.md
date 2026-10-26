@@ -158,6 +158,14 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   (el bono sigue pendiente). El entrenador puede **«Deshacer aviso»** mientras no se valide. La base de datos impone que `pagado_el` sea
   solo del administrador, que quien avisa quede registrado sin poder falsearse, que no se pueda avisar de una fecha futura ni de un
   cobro de «paga después» (esos los apunta solo el administrador) y que al pagarse el bono el aviso se borre solo.
+- **Avisar de un cobro en los clientes que «pagan después»** (`sql/20_avisar_cobros_paga_despues.sql`): lo mismo que arriba para quien
+  entrena y paga después, cuyos cobros antes solo podía apuntar el administrador. El entrenador pulsa **«💶 Avisar cobro»** en la ficha
+  (o en la lista) y, si el cliente paga **por sesión**, marca qué sesiones le ha pagado (propone el importe = sesiones × tarifa); si paga
+  **a cuenta**, solo importe, fecha y método. Se guarda en la tabla `cobros_avisados` y no cambia lo que debe el cliente. Al
+  administrador le sale como «COBRO POR VALIDAR» (mismo contador y filtro que los bonos): **«✓ Validar»** crea el cobro de verdad
+  (esas sesiones pasan a «cobradas» o se suma a lo pagado a cuenta) y borra el aviso; **«Rechazar aviso»** lo borra sin registrar nada.
+  La base de datos impone que solo se avise de clientes con «paga después» aprobado y de los suyos, con fecha no futura, que las sesiones
+  elegidas sean del cliente y no estén ya cobradas, y que quien avisa no se pueda falsear.
 - **Anticipos a los entrenadores** (`sql/18_anticipos_entrenadores.sql`): en Comisiones, cada entrenador tiene una sección «Anticipos
   entregados» con «+ Registrar anticipo» (importe, fecha en que se le dio, mes de la liquidación del que se descuenta —por defecto el de
   la fecha— y una nota). Se resta de su comisión de ese mes: el título del entrenador y el «TOTAL A LIQUIDAR» muestran lo que queda por

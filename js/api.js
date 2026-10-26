@@ -100,6 +100,13 @@ export async function registrarCobroSesiones({ bono, sesionIds }) {
   }
   return creado;
 }
+// Avisos de cobro de clientes que pagan después (sql/20): el entrenador avisa, el administrador valida (crea el cobro y borra el aviso).
+export async function listarCobrosAvisados() { return comprobar(await sb.from('cobros_avisados').select('*').order('creado_en')); }
+export async function crearCobroAvisado(a) { return comprobar(await sb.from('cobros_avisados').insert(a).select().single()); }
+export async function eliminarCobroAvisado(id) {
+  const filas = comprobar(await sb.from('cobros_avisados').delete().eq('id', id).select('id'));
+  if (!filas.length) throw new Error('No se ha podido quitar el aviso (puede que ya no exista).');
+}
 // Varias sesiones de golpe: lista = [{ id, cambios }]. Cada una es su propio UPDATE (cada sesión lleva
 // un valor distinto); si alguna falla se avisa cuántas sí se cambiaron, para no dejar al usuario a ciegas.
 export async function actualizarSesiones(lista) {

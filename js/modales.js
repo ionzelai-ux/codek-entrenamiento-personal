@@ -7,7 +7,7 @@ import {
   creditos, estadoEfectivo, ocupaCredito, diaSemana,
   sesionesCambiables, horaNueva, planCambioHorario, diasFijosActualizados,
   esDiferido, deudaDiferida, planCobroSesiones, planPagoRecibido, modoDiferido, planProximoBono, mesDeFecha,
-  bonosAvisables, bonosAvisados, cambiosValidarCobro, estadoPago,
+  bonosAvisables, bonosAvisados, cambiosValidarCobro, estadoPago, avisosDiferido,
 } from './logica.js';
 import { OPCIONES_BONO, DURACION_SESION_MIN } from './config.js';
 
@@ -605,6 +605,114 @@ export function modalValidarCobro(c) {
     val.exige(metodo, 'metodo_pago', 'método');
     val.cierra();
     for (const b of bonos) await S.api.actualizarBono(b.id, cambiosValidarCobro(b, { fecha, metodo }));
+    m.cerrar();
+    await bus.recargar();
+    toast('Cobro validado');
+  });
+}
+
+// ── Avisar de un cobro de un cliente que «paga después» (entrenador) y validarlo (administrador) ──────────────
+// «Por sesión»: se eligen las sesiones que abona; «a cuenta»: solo importe, fecha y método. Es un aviso: no cambia lo que debe
+// el cliente hasta que el administrador lo valida (entonces se crea el cobro de verdad) o lo rechaza.
+const leerImporteTexto = t => { const s = String(t).trim().replace(',', '.'); const n = Number(s); return s === '' || !Number.isFinite(n) ? NaN : n; };
+export function modalAvisarCobroDiferido(c) {
+  const d = c && deudaDiferida(c);
+  if (!d) { toast('Este cliente no entrena y paga después.', true); return; }
+  const cuenta = d.modo === 'cuenta';
+  const yaAvisadas = new Set(avisosDiferido(c).flatMap(a => a.sesion_ids || []));
+  const pendientes = cuenta ? [] : d.pendientes.filter(s => !yaAvisadas.has(s.id));
+  if (!cuenta && !pendientes.length) { toast('No hay sesiones por cobrar sin avisar.', true); return; }
+  const hoy = hoyISO();
+  const m = abrirModal(`
+    <div class="modal-title">Avisar de un cobro</div>
+    <p class="sub">${esc(nombreCompleto(c))} · ${cuenta ? 'paga «a cuenta»' : 'paga por sesión'} · lo valida el administrador</p>
+    <form novalidate>
+      ${cuenta ? '' : `<div class="section-mini">¿Qué sesiones te ha pagado?</div>
+        <div class="gen-lista" data-lista>${pendientes.map((s, i) => `<label class="gen-fila"><input type="checkbox" data-i="${i}" ${pendientes.length === 1 ? 'checked' : ''}>
+          <span class="gf-f">${fmtFechaDia(s.fecha)}</span><span class="gf-h">${esc(s.hora)}</span>${d.tarifa === null ? '' : `<span class="gf-h">${esc(fmtEUR(d.tarifa))}</span>`}</label>`).join('')}</div>`}
+      <div class="form-row3" style="margin-top:14px">
+        <div class="form-group"><label class="form-label">Importe que te han dado (€) *</label><input class="form-input" name="importe" type="text" inputmode="decimal" autocomplete="off" placeholder="p. ej. 40"></div>
+        <div class="form-group"><label class="form-label">Fecha en que lo recibiste *</label><input class="form-input" name="fecha" type="date" max="${hoy}" value="${hoy}"></div>
+        <div class="form-group"><label class="form-label">Cómo te lo dieron *</label>${segHTML('metodo_pago', METODOS_PAGO, '')}</div>
+      </div>
+      <div class="hint">No cambia lo que debe el cliente hasta que el administrador lo valide.</div>
+      ${acciones('Avisar del cobro')}
+    </form>`, 'modal-lg');
+  const form = m.el.querySelector('form');
+  bindCerrar(m); bindSeg(m.el);
+  const elegidas = () => [...form.querySelectorAll('[data-i]:checked')].map(i => pendientes[Number(i.dataset.i)]);
+  let importeAMano = false;
+  const sugerir = () => {
+    if (importeAMano || d.tarifa === null) return;
+    const n = elegidas().length;
+    form.elements.importe.value = n ? String(Math.round(n * d.tarifa * 100) / 100).replace('.', ',') : '';
+  };
+  form.elements.importe.addEventListener('input', () => { importeAMano = true; });
+  form.querySelector('[data-lista]')?.addEventListener('change', sugerir);
+  sugerir();
+  alEnviar(m, form, async () => {
+    const val = nuevoValidador(m.el);
+    const importe = leerImporteTexto(form.elements.importe.value), fecha = form.elements.fecha.value, metodo = segVal(m.el, 'metodo_pago');
+    const ses = cuenta ? [] : elegidas();
+    if (!cuenta && !ses.length) throw new Error('Marca al menos una sesión de las que te ha pagado');
+    val.exige(!Number.isNaN(importe) && importe > 0, 'importe', 'importe que te han dado');
+    val.exige(fecha && fecha <= hoy, 'fecha', 'fecha (no puede ser futura)');
+    val.exige(metodo, 'metodo_pago', 'cómo te lo dieron');
+    val.cierra();
+    await S.api.crearCobroAvisado({ cliente_id: c.id, importe: Math.round(importe * 100) / 100, fecha, metodo, sesion_ids: ses.map(s => s.id) });
+    m.cerrar();
+    await bus.recargar();
+    toast(esAdmin() ? 'Cobro apuntado' : 'Cobro avisado · el administrador lo tiene que validar');
+  });
+}
+
+// Administrador: valida (crea el cobro de verdad) o rechaza un aviso de cobro de un cliente que paga después.
+export function modalValidarAvisoDiferido(c, aviso) {
+  if (!esAdmin() || !c || !aviso) return;
+  const ids = aviso.sesion_ids || [];
+  const sesiones = ids.map(id => (c.sesiones || []).find(s => s.id === id)).filter(Boolean);
+  const quien = entrenadorDe(aviso.avisado_por)?.nombre || entrenadorDe(c.entrenador_id)?.nombre || 'El entrenador';
+  const m = abrirModal(`
+    <div class="modal-title">Validar cobro</div>
+    <p class="sub">${esc(nombreCompleto(c))} · ${ids.length ? 'paga por sesión' : 'paga «a cuenta»'}</p>
+    <div class="dif-pend" style="margin:0 0 14px;border:none;padding:0"><div><b>${esc(quien)}</b> avisó: recibió <b>${esc(fmtEUR(aviso.importe))}</b> el ${esc(fmtFecha(aviso.fecha))} · ${esc(etiquetaMetodo(aviso.metodo))}</div>
+      ${ids.length ? `<div>Sesiones que abona: ${sesiones.length ? sesiones.map(s => esc(fmtFechaDia(s.fecha))).join(' · ') : '—'}</div>` : ''}</div>
+    <form novalidate>
+      <div class="form-row3">
+        <div class="form-group"><label class="form-label">Importe (€) *</label><input class="form-input" name="importe" type="text" inputmode="decimal" autocomplete="off" value="${esc(String(aviso.importe).replace('.', ','))}"></div>
+        <div class="form-group"><label class="form-label">Fecha de cobro *</label><input class="form-input" name="fecha" type="date" value="${esc(aviso.fecha)}"></div>
+        <div class="form-group"><label class="form-label">Método *</label>${segHTML('metodo_pago', METODOS_PAGO, aviso.metodo)}</div>
+      </div>
+      <div class="hint">Al validar se registra el cobro (${ids.length ? 'esas sesiones pasan a «cobradas»' : 'se suma a lo que ha pagado'}) y cuenta en el mes de esa fecha.</div>
+      ${acciones('✓ Validar cobro', '<button type="button" class="btn btn-secondary" data-rechazar>Rechazar aviso</button>')}
+    </form>`, 'modal-lg');
+  const form = m.el.querySelector('form');
+  bindCerrar(m); bindSeg(m.el);
+  m.el.querySelector('[data-rechazar]').addEventListener('click', async () => {
+    const ok = await dialogo({ titulo: 'Rechazar aviso', mensaje: `<p>¿Rechazar el aviso de cobro de <b>${esc(nombreCompleto(c))}</b>? No se registrará nada.</p>`, ok: 'Rechazar aviso', peligro: true });
+    if (!ok) return;
+    try {
+      await S.api.eliminarCobroAvisado(aviso.id);
+      m.cerrar();
+      await bus.recargar();
+      toast('Aviso rechazado');
+    } catch (e) { errorEnModal(m.el, e.message || 'Error inesperado'); }
+  });
+  alEnviar(m, form, async () => {
+    const val = nuevoValidador(m.el);
+    const importe = leerImporteTexto(form.elements.importe.value), fecha = form.elements.fecha.value, metodo = segVal(m.el, 'metodo_pago');
+    val.exige(!Number.isNaN(importe) && importe > 0, 'importe', 'importe');
+    val.exige(fecha, 'fecha', 'fecha de cobro');
+    val.exige(metodo, 'metodo_pago', 'método');
+    val.cierra();
+    if (ids.length) {
+      const libres = sesiones.filter(s => !s.cobro_bono_id);
+      if (libres.length !== ids.length) throw new Error('Alguna de esas sesiones ya está cobrada o ya no existe: rechaza el aviso y revisa el cobro a mano.');
+      await S.api.registrarCobroSesiones(planCobroSesiones(c, ids, { importe, fecha, metodo }));
+    } else {
+      await S.api.crearBono(planPagoRecibido(c, { importe, fecha, metodo }));
+    }
+    await S.api.eliminarCobroAvisado(aviso.id);
     m.cerrar();
     await bus.recargar();
     toast('Cobro validado');

@@ -17,9 +17,16 @@ const VISTAS = { calendario: renderCalendario, clientes: renderClientes, resumen
 const SOLO_ADMIN = ['resumen', 'aimharder'];   // «comisiones» la ve también cada entrenador (solo lo suyo): ver puedeVerComisiones
 const pintar = () => VISTAS[S.vista](vistaEl);
 
+// Clientes con sus bonos y sesiones, y en cada uno `avisos` = los avisos de cobro del entrenador pendientes de validar (sql/20).
+// Si esa tabla aún no existe, la aplicación sigue funcionando sin avisos.
+async function cargarClientes() {
+  const [clientes, avisos] = await Promise.all([S.api.listarClientes(), S.api.listarCobrosAvisados().catch(() => [])]);
+  S.clientes = clientes.map(c => ({ ...c, avisos: avisos.filter(a => a.cliente_id === c.id) }));
+}
+
 bus.repintar = pintar;
 bus.recargar = async () => {
-  S.clientes = await S.api.listarClientes();
+  await cargarClientes();
   pintarCabecera();   // por si cambia el aviso de cobros por validar
   if (S.vista === 'calendario') await cargarCalendario(); else pintar();
 };
@@ -110,8 +117,8 @@ async function entrar() {
   $('login').hidden = true;
   $('app').hidden = false;
   S.entrenadores = await S.api.listarEntrenadores();
-  S.clientes = await S.api.listarClientes();
-  Object.assign(S, { vista: 'calendario', filtroEntr: 'todos', cliSel: null });
+  await cargarClientes();
+Object.assign(S, { vista: 'calendario', filtroEntr: 'todos', cliSel: null });
   pintarCabecera();
   await cargarCalendario();
 }
