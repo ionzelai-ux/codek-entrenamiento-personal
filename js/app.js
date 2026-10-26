@@ -2,7 +2,7 @@
 import { SUPABASE_ANON_KEY } from './config.js';
 import { S, bus, esAdmin, puedeVerComisiones, clienteDe } from './store.js';
 import { esc, toast } from './util.js';
-import { hoyISO } from './logica.js';
+import { hoyISO, resumenPorValidar } from './logica.js';
 import { renderCalendario, cargarCalendario, accionesCalendario, iniciarArrastre } from './vista-calendario.js';
 import { renderClientes, alBuscar, accionesClientes } from './vista-clientes.js';
 import { renderResumen, accionesResumen } from './vista-resumen.js';
@@ -20,6 +20,7 @@ const pintar = () => VISTAS[S.vista](vistaEl);
 bus.repintar = pintar;
 bus.recargar = async () => {
   S.clientes = await S.api.listarClientes();
+  pintarCabecera();   // por si cambia el aviso de cobros por validar
   if (S.vista === 'calendario') await cargarCalendario(); else pintar();
 };
 
@@ -28,8 +29,11 @@ function pintarCabecera() {
   const admin = esAdmin();
   const tabs = [['calendario', 'Calendario'], ['clientes', 'Clientes'], ...(admin ? [['resumen', 'Resumen']] : []),
     ...(puedeVerComisiones() ? [['comisiones', 'Comisiones']] : []), ...(admin ? [['aimharder', 'AimHarder']] : [])];
+  // El administrador ve en «Clientes» cuántos cobros avisados por los entrenadores están por validar.
+  const porValidar = admin ? resumenPorValidar(S.clientes).n : 0;
+  const etiqueta = (v, l) => (v === 'clientes' && porValidar ? `${l}<span class="nav-badge" title="${porValidar} cobro${porValidar === 1 ? '' : 's'} por validar">${porValidar}</span>` : l);
   $('nav').innerHTML = tabs.map(([v, l]) =>
-    `<button class="nav-tab ${S.vista === v ? 'active' : ''}" data-acc="vista" data-v="${v}">${l}</button>`).join('');
+    `<button class="nav-tab ${S.vista === v ? 'active' : ''}" data-acc="vista" data-v="${v}">${etiqueta(v, l)}</button>`).join('');
   const selector = admin && S.vista !== 'aimharder'
     ? `<select id="selEntr" class="form-input sel-entr" aria-label="Entrenador">
          <option value="todos">Todos los entrenadores</option>

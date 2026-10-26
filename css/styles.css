@@ -330,6 +330,11 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
 .sess-cobrada { margin-left: 4px; }
 .tabla tfoot td { border-top: 2px solid var(--border); border-bottom: none; padding-top: 12px; }
 
+/* Cobros avisados por el entrenador, pendientes de validar */
+.chip.por-validar { border-color: var(--blue-light); color: var(--blue-light); background: rgba(74,159,212,.14); font-weight: 700; }
+.alert-por-validar { background: rgba(74,159,212,.1); border-color: var(--blue-light); color: var(--blue-light); }
+.nav-badge { display: inline-block; min-width: 17px; margin-left: 6px; padding: 1px 5px; border-radius: 9px; background: var(--blue-light); color: #0b1a24; font-size: 10px; font-weight: 700; line-height: 1.5; letter-spacing: 0; }
+
 /* Renovaciones: marcas en el calendario, panel de la ficha, ficha del bono vigente y previsión del Resumen */
 .marca-bono { margin-left: 3px; font-size: 11px; line-height: 1; }
 .cell-sess .marca-bono { font-size: 9px; margin-left: 2px; }

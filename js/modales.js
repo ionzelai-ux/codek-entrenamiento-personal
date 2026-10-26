@@ -1,12 +1,13 @@
 // Formularios en modal: sesión, ficha de cliente, convertir potencial, nuevo bono y
 // generación de sesiones desde días fijos (con aviso de solapes).
 import { S, bus, esAdmin, entrenadorDe, nombreCompleto, clienteDe, entrenadorFiltroId } from './store.js';
-import { esc, abrirModal, dialogo, errorEnModal, toast, fmtFechaDia, fmtEUR, nombreMes, DIAS_SEM, textoDias, METODOS_PAGO } from './util.js';
+import { esc, abrirModal, dialogo, errorEnModal, toast, fmtFecha, fmtFechaDia, fmtEUR, nombreMes, DIAS_SEM, textoDias, METODOS_PAGO, etiquetaMetodo } from './util.js';
 import {
   hoyISO, precioBonoSugerido, precioHoraSugerido, buscarConflictos, generarFechas,
   creditos, estadoEfectivo, ocupaCredito, diaSemana,
   sesionesCambiables, horaNueva, planCambioHorario, diasFijosActualizados,
   esDiferido, deudaDiferida, planCobroSesiones, planPagoRecibido, modoDiferido, planProximoBono, mesDeFecha,
+  bonosAvisables, bonosAvisados, cambiosValidarCobro, estadoPago,
 } from './logica.js';
 import { OPCIONES_BONO, DURACION_SESION_MIN } from './config.js';
 
@@ -516,6 +517,97 @@ export function modalBono(c) {
     await bus.recargar();
     toast('Bono añadido');
     if (generar) modalGenerar(clienteDe(c.id), { bono: creado, cantidad: creado.sesiones });
+  });
+}
+
+// ── Avisar de un cobro (entrenador) y validarlo (administrador) ─────────────────────────────────────────
+// El entrenador apunta que un cliente le ha pagado un bono (cuándo y cómo); el bono no pasa a «pagado» hasta que el administrador
+// lo valida. `bonos` = los bonos entre los que elegir (por defecto, todos los que se pueden avisar del cliente).
+export function modalAvisarCobro(c, bonos = null) {
+  const candidatos = bonos || bonosAvisables(c);
+  if (!candidatos.length) { toast('Este cliente no tiene ningún bono pendiente de cobro.', true); return; }
+  const hoy = hoyISO();
+  const vencidos = candidatos.filter(b => estadoPago(b, hoy) === 'pendiente');
+  const marcados = new Set((vencidos.length ? vencidos : [candidatos[0]]).map(b => b.id));
+  const lineaBono = b => `${b.sesiones} ${b.sesiones === 1 ? 'sesión' : 'sesiones'} · ${fmtEUR(b.precio)} · fecha de pago ${fmtFecha(b.fecha_pago)}`;
+  const m = abrirModal(`
+    <div class="modal-title">Avisar de un cobro</div>
+    <p class="sub">${esc(nombreCompleto(c))} · lo valida el administrador</p>
+    <form novalidate>
+      ${candidatos.length > 1
+        ? `<div class="form-group"><label class="form-label">¿Qué bono te ha pagado? *</label>${candidatos.map(b =>
+          `<label class="check"><input type="checkbox" name="bono" value="${b.id}" ${marcados.has(b.id) ? 'checked' : ''}> <span>${esc(lineaBono(b))}</span></label>`).join('')}</div>`
+        : `<div class="hint" style="margin-bottom:12px">Bono: <b>${esc(lineaBono(candidatos[0]))}</b></div>`}
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Fecha en que lo recibiste *</label>
+          <input class="form-input" name="fecha" type="date" max="${hoy}" value="${hoy}"></div>
+        <div class="form-group"><label class="form-label">Cómo te lo dieron *</label>
+          ${segHTML('metodo_pago', METODOS_PAGO, candidatos[0].metodo_pago || '')}</div>
+      </div>
+      <div class="hint">El bono no pasa a «pagado» hasta que el administrador lo valide: le aparecerá como cobro por validar.</div>
+      ${acciones('Avisar del cobro')}
+    </form>`, 'modal-lg');
+  const form = m.el.querySelector('form');
+  bindCerrar(m); bindSeg(m.el);
+  alEnviar(m, form, async () => {
+    const val = nuevoValidador(m.el);
+    const ids = candidatos.length > 1 ? [...form.querySelectorAll('[name=bono]:checked')].map(x => x.value) : [candidatos[0].id];
+    const fecha = form.elements.fecha.value, metodo = segVal(m.el, 'metodo_pago');
+    val.exige(ids.length > 0, 'bono', 'el bono que ha pagado');
+    val.exige(fecha && fecha <= hoy, 'fecha', 'fecha de cobro (no puede ser futura)');
+    val.exige(metodo, 'metodo_pago', 'cómo te lo dieron');
+    val.cierra();
+    for (const id of ids) await S.api.actualizarBono(id, { cobro_avisado_el: fecha, cobro_avisado_metodo: metodo });
+    m.cerrar();
+    await bus.recargar();
+    toast(esAdmin() ? 'Cobro apuntado' : 'Cobro avisado · el administrador lo tiene que validar');
+  });
+}
+
+// Administrador: valida (o rechaza) los cobros que ha avisado el entrenador de un cliente.
+export function modalValidarCobro(c) {
+  if (!esAdmin()) return;
+  const bonos = bonosAvisados(c);
+  if (!bonos.length) { toast('Este cliente no tiene cobros por validar.', true); return; }
+  const b0 = bonos[0];
+  const aviso = b => `${esc(entrenadorDe(b.cobro_avisado_por)?.nombre || entrenadorDe(c.entrenador_id)?.nombre || 'El entrenador')} avisó: recibido el ${esc(fmtFecha(b.cobro_avisado_el))}${b.cobro_avisado_metodo ? ' · ' + esc(etiquetaMetodo(b.cobro_avisado_metodo)) : ''}`;
+  const m = abrirModal(`
+    <div class="modal-title">Validar cobro</div>
+    <p class="sub">${esc(nombreCompleto(c))}</p>
+    <div class="dif-pend" style="margin:0 0 14px;border:none;padding:0">${bonos.map(b =>
+      `<div><b>${b.sesiones} ${b.sesiones === 1 ? 'sesión' : 'sesiones'} · ${esc(fmtEUR(b.precio))}</b> — ${aviso(b)}</div>`).join('')}</div>
+    <form novalidate>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Fecha de cobro *</label>
+          <input class="form-input" name="fecha" type="date" value="${esc(b0.cobro_avisado_el)}">
+          <div class="hint">Con esta fecha queda pagado: cuenta en el mes de esta fecha para el Resumen y las comisiones.</div></div>
+        <div class="form-group"><label class="form-label">Método *</label>
+          ${segHTML('metodo_pago', METODOS_PAGO, b0.cobro_avisado_metodo || b0.metodo_pago || '')}</div>
+      </div>
+      ${acciones('✓ Validar cobro', '<button type="button" class="btn btn-secondary" data-rechazar>Rechazar aviso</button>')}
+    </form>`, 'modal-lg');
+  const form = m.el.querySelector('form');
+  bindCerrar(m); bindSeg(m.el);
+  m.el.querySelector('[data-rechazar]').addEventListener('click', async () => {
+    const ok = await dialogo({ titulo: 'Rechazar aviso', mensaje: `<p>¿Rechazar el aviso de cobro de <b>${esc(nombreCompleto(c))}</b>? El bono seguirá pendiente de pago.</p>`, ok: 'Rechazar aviso', peligro: true });
+    if (!ok) return;
+    try {
+      for (const b of bonos) await S.api.actualizarBono(b.id, { cobro_avisado_el: null });
+      m.cerrar();
+      await bus.recargar();
+      toast('Aviso rechazado: el bono sigue pendiente');
+    } catch (e) { errorEnModal(m.el, e.message || 'Error inesperado'); }
+  });
+  alEnviar(m, form, async () => {
+    const val = nuevoValidador(m.el);
+    const fecha = form.elements.fecha.value, metodo = segVal(m.el, 'metodo_pago');
+    val.exige(fecha, 'fecha', 'fecha de cobro');
+    val.exige(metodo, 'metodo_pago', 'método');
+    val.cierra();
+    for (const b of bonos) await S.api.actualizarBono(b.id, cambiosValidarCobro(b, { fecha, metodo }));
+    m.cerrar();
+    await bus.recargar();
+    toast('Cobro validado');
   });
 }
 

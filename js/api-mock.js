@@ -214,7 +214,17 @@ export async function actualizarBono(id, cambios) {
   const b = bonos.find(x => x.id === id);
   if (!b || !idsVisibles().has(b.cliente_id)) throw new Error('Bono no encontrado');
   if (actual.rol !== 'admin' && 'pagado_el' in cambios && (cambios.pagado_el || null) !== (b.pagado_el || null)) throw new Error(SOLO_ADMIN_PAGO);
+  const antes = { ...b };
   Object.assign(b, cambios);
+  // Como el disparador sql/19: un cobro avisado lo firma quien lo avisa, no se puede avisar de un cobro ni del futuro, y al pagarse se borra.
+  const limpiar = () => { b.cobro_avisado_el = null; b.cobro_avisado_metodo = null; b.cobro_avisado_por = null; b.cobro_avisado_en = null; };
+  if (b.pagado_el || !b.cobro_avisado_el) limpiar();
+  else if (actual.rol !== 'admin') {
+    if (b.tipo !== 'bono') { Object.assign(b, antes); throw new Error('Solo se puede avisar del cobro de un bono'); }
+    if (b.cobro_avisado_el > hoyISO()) { Object.assign(b, antes); throw new Error('La fecha en que recibiste el cobro no puede ser futura'); }
+    if (b.cobro_avisado_el === antes.cobro_avisado_el && b.cobro_avisado_metodo === antes.cobro_avisado_metodo) { b.cobro_avisado_por = antes.cobro_avisado_por; b.cobro_avisado_en = antes.cobro_avisado_en; }
+    else { b.cobro_avisado_por = actual.id; b.cobro_avisado_en = new Date().toISOString(); }
+  }
   return clonar(b);
 }
 export async function eliminarBono(id) {

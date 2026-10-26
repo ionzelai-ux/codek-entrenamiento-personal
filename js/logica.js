@@ -155,6 +155,35 @@ export function precioSesionEstimado(cliente) {
 // si no, 'pendiente' cuando su fecha de pago es hoy o ya pasó, y 'programado' cuando es futura.
 export const estadoPago = (bono, hoy = hoyISO()) => (bono.pagado_el ? 'pagado' : bono.fecha_pago <= hoy ? 'pendiente' : 'programado');
 
+// ── Cobros avisados por el entrenador (sql/19) ───────────────────────────────────────────────────────
+// El entrenador apunta que ha cobrado un bono (`cobro_avisado_el`, `cobro_avisado_metodo`, `cobro_avisado_por`); el bono sigue sin
+// estar pagado hasta que el administrador lo valida (pagado_el). Mientras tanto es un cobro «por validar».
+export const cobroAvisado = b => !b.pagado_el && !!b.cobro_avisado_el && b.tipo !== 'cobro';
+export const bonosAvisados = c => (c.bonos || []).filter(cobroAvisado);
+// Bonos que un entrenador todavía puede avisar como cobrados: normales, sin pagar y sin aviso (los más antiguos primero).
+export const bonosAvisables = c => (c.bonos || []).filter(b => !b.pagado_el && !cobroAvisado(b) && b.tipo !== 'cobro' && Number(b.sesiones) > 0)
+  .sort((a, b) => String(a.fecha_pago).localeCompare(String(b.fecha_pago)));
+// Todo lo que está por validar: { n: bonos, importe, filas: [{ cliente, bonos }] } (solo clientes activos).
+export function resumenPorValidar(clientes) {
+  const filas = [];
+  let n = 0, importe = 0;
+  for (const cliente of clientes) {
+    if (cliente.activo === false) continue;
+    const bonos = bonosAvisados(cliente);
+    if (!bonos.length) continue;
+    filas.push({ cliente, bonos });
+    n += bonos.length;
+    importe += bonos.reduce((t, b) => t + (Number(b.precio) || 0), 0);
+  }
+  return { n, importe: redondeo(importe), filas };
+}
+// Lo que se guarda al validar un cobro avisado: queda pagado en la fecha que se confirme (por defecto la que dijo el entrenador)
+// y con el método con el que de verdad lo recibió. El aviso se borra solo en la base de datos.
+export const cambiosValidarCobro = (bono, { fecha, metodo } = {}) => ({
+  pagado_el: fecha || bono.cobro_avisado_el,
+  metodo_pago: metodo || bono.cobro_avisado_metodo || bono.metodo_pago || null,
+});
+
 export const UMBRAL_RENOVAR = 2;   // con tantas sesiones o menos (y nada más por cobrar) toca renovar
 
 // Situación de cobro de un cliente (para la lista): la primera que se cumpla de

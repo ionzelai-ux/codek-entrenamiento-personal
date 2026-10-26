@@ -146,6 +146,15 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
 - **Resumen → Facturación prevista**: la fecha de pago de cada bono decide en qué mes cuenta; muestra el total de
   dos meses seguidos (por defecto este y el siguiente; con ◀ ▶ se puede ir hacia atrás, p. ej. para ver lo que se
   cobró en septiembre), desglosado en pagado / pendiente de cobro / programado / **renovación prevista**, con el detalle de cada bono.
+- **Avisar de un cobro / cobros por validar** (`sql/19_avisar_cobros.sql`): si un cliente le paga a un entrenador y el administrador no
+  está, el entrenador pulsa **«💶 Avisar cobro»** (en la lista de clientes, en la alerta de la ficha o en cada bono) e indica la fecha en
+  que lo recibió y cómo se lo dieron. El bono **no pasa a «pagado»**: sigue pendiente de verdad y al administrador le sale como
+  **«COBRO POR VALIDAR»** (aviso en la lista, botón «🔔 N cobros por validar» en la franja de cobros —que filtra la lista— y un contador en
+  la pestaña Clientes). El administrador pulsa **«✓ Validar»**: revisa la fecha y el método (por defecto los que dijo el entrenador) y
+  queda pagado con esa fecha, así que entra en el Resumen y en las comisiones del mes en que se cobró; o **«Rechazar aviso»**
+  (el bono sigue pendiente). El entrenador puede **«Deshacer aviso»** mientras no se valide. La base de datos impone que `pagado_el` sea
+  solo del administrador, que quien avisa quede registrado sin poder falsearse, que no se pueda avisar de una fecha futura ni de un
+  cobro de «paga después» (esos los apunta solo el administrador) y que al pagarse el bono el aviso se borre solo.
 - **Anticipos a los entrenadores** (`sql/18_anticipos_entrenadores.sql`): en Comisiones, cada entrenador tiene una sección «Anticipos
   entregados» con «+ Registrar anticipo» (importe, fecha en que se le dio, mes de la liquidación del que se descuenta —por defecto el de
   la fecha— y una nota). Se resta de su comisión de ese mes: el título del entrenador y el «TOTAL A LIQUIDAR» muestran lo que queda por
