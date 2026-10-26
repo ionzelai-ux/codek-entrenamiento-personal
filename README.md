@@ -146,6 +146,9 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
 - **Resumen → Facturación prevista**: la fecha de pago de cada bono decide en qué mes cuenta; muestra el total de
   dos meses seguidos (por defecto este y el siguiente; con ◀ ▶ se puede ir hacia atrás, p. ej. para ver lo que se
   cobró en septiembre), desglosado en pagado / pendiente de cobro / programado / **renovación prevista**, con el detalle de cada bono.
+- **Calendario → ficha del cliente**: en cada sesión (vista de semana y de mes), un clic en el **nombre del cliente** abre su ficha en
+  Clientes; un clic en cualquier otra parte del bloque abre la sesión para validarla, cambiarla o cancelarla. Arrastrar el bloque
+  para cambiar su hora sigue funcionando también si se agarra por el nombre.
 - **Avisar de un cobro / cobros por validar** (`sql/19_avisar_cobros.sql`): si un cliente le paga a un entrenador y el administrador no
   está, el entrenador pulsa **«💶 Avisar cobro»** (en la lista de clientes, en la alerta de la ficha o en cada bono) e indica la fecha en
   que lo recibió y cómo se lo dieron. El bono **no pasa a «pagado»**: sigue pendiente de verdad y al administrador le sale como

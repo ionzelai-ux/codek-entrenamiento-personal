@@ -1,5 +1,5 @@
 // Calendario: vista de semana (columnas por día con horas) o de mes (cuadrícula).
-import { S, bus, esAdmin, entrenadorDe, nombreCompleto, entrenadorFiltroId } from './store.js';
+import { S, bus, esAdmin, entrenadorDe, nombreCompleto, entrenadorFiltroId, clienteDe } from './store.js';
 import { esc, nombreMes, mesCorto, dialogo, toast, fmtFechaDia, filtroEntrenadorHTML } from './util.js';
 import {
   hoyISO, addDias, lunesDe, primerDiaMes, ultimoDiaMes, parseISO, horaAMin, minAHora,
@@ -45,6 +45,8 @@ const pastilla = s => (mostrarEntr() ? `<i class="tc" style="background:${colorE
 const MARCA_BONO = { penultima: ['⚡', 'Penúltima clase del bono: avisa para renovar'], ultima: ['🏁', 'Última clase del bono: toca renovar'] };
 let marcas = new Map();
 const marcaBono = s => MARCA_BONO[marcas.get(s.id)] || null;
+// El nombre del cliente es un enlace a su ficha; el resto del bloque abre la sesión.
+const nombreFicha = (s, texto, clase = '') => `<span class="nombre-ficha ${clase}" data-acc="ses-ficha" data-cliente="${esc(s.cliente_id || s.clientes?.id || '')}" title="Abrir la ficha de ${esc(nombreCompleto(s.clientes))}">${clase ? ' ' : ''}${texto}</span>`;
 const iconoBono = s => { const m = marcaBono(s); return m ? `<span class="marca-bono" aria-label="${esc(m[1])}">${m[0]}</span>` : ''; };
 const tip = s => `${s.hora} · ${nombreCompleto(s.clientes)}${mostrarEntr() ? ' · ' + (entrenadorDe(s.clientes.entrenador_id)?.nombre || '') : ''} · ${ETIQUETA[estadoEfectivo(s)]}${s.nota ? ' · ' + s.nota : ''}${marcaBono(s) ? ' · ' + marcaBono(s)[1] : ''}`;
 
@@ -72,7 +74,7 @@ function semanaHTML() {
       return `<div class="blk ${estadoEfectivo(s)}" data-acc="ses-abrir" data-id="${s.id}" title="${esc(tip(s))}"
           style="top:${top}px;height:${alto}px;left:calc(${lane * w}% + 1px);width:calc(${w}% - 2px)">
         <div class="blk-h">${pastilla(s)}${minAHora(ini)}–${minAHora(fin)}${iconoBono(s)}</div>
-        <div class="blk-n">${esc(nombreCompleto(s.clientes))}</div></div>`;
+        <div class="blk-n">${nombreFicha(s, esc(nombreCompleto(s.clientes)))}</div></div>`;
     }).join('');
     return `<div class="wk-col ${f === hoy ? 'hoy' : ''}" data-acc="col-nuevo" data-fecha="${f}" data-h0="${h0}">${bloques}</div>`;
   }).join('');
@@ -98,7 +100,7 @@ function mesHTML() {
   let celdas = '';
   for (let f = d1; f <= d2; f = addDias(f, 1)) {
     const lista = (porDia.get(f) || []).sort((a, b) => a.hora.localeCompare(b.hora));
-    const pills = lista.slice(0, 3).map(s => `<div class="cell-sess ${estadoEfectivo(s)}" data-acc="ses-abrir" data-id="${s.id}" title="${esc(tip(s))}">${pastilla(s)}${s.hora}<span class="pn"> ${esc(s.clientes.nombre)}</span>${iconoBono(s)}</div>`).join('');
+    const pills = lista.slice(0, 3).map(s => `<div class="cell-sess ${estadoEfectivo(s)}" data-acc="ses-abrir" data-id="${s.id}" title="${esc(tip(s))}">${pastilla(s)}${s.hora}${nombreFicha(s, esc(s.clientes.nombre), 'pn')}${iconoBono(s)}</div>`).join('');
     const mas = lista.length > 3 ? `<div class="cell-mas" data-acc="dia-semana" data-fecha="${f}">+${lista.length - 3} más</div>` : '';
     celdas += `<div class="cal-cell ${f.slice(0, 7) !== mesActual ? 'fuera' : ''} ${f === hoy ? 'today' : ''}" data-acc="dia-nuevo" data-fecha="${f}">
       <div class="cell-num">${parseISO(f).getDate()}</div>${pills}${mas}</div>`;
@@ -155,6 +157,15 @@ function mover(n) {
 const PASO_MIN = 30;
 let arrastre = null;
 let ignorarClic = false;      // tras arrastrar, el navegador lanza un "clic" que no debe abrir nada
+let clienteBajoPuntero = null;   // id del cliente si el último puntero se pulsó sobre su nombre (abre su ficha, no la sesión)
+
+// Ir a la ficha de un cliente desde el calendario (clic en su nombre).
+function abrirFicha(id) {
+  clienteBajoPuntero = null;
+  if (!id || !clienteDe(id)) { toast('No se encuentra la ficha de este cliente', true); return; }
+  S.cliSel = id;
+  bus.irA('clientes');
+}
 
 function destinoArrastre(e) {
   const a = arrastre;
@@ -218,6 +229,8 @@ async function moverSesion(s, fecha, hora) {
 
 export function iniciarArrastre() {
   document.addEventListener('pointerdown', e => {
+    // Si se pulsó sobre el nombre del cliente, el clic abre su ficha aunque el bloque capture el puntero (arrastre).
+    clienteBajoPuntero = e.target.closest?.('[data-acc="ses-ficha"]')?.dataset.cliente || null;
     const bloque = e.target.closest?.('.wk .blk');
     if (!bloque || e.button !== 0 || e.pointerType === 'touch' || arrastre) return;
     const s = S.cal.sesiones.find(x => x.id === bloque.dataset.id);
@@ -285,8 +298,13 @@ export const accionesCalendario = {
   'ses-nueva': () => modalSesion({ fecha: hoyISO() }),
   'ses-abrir': t => {
     if (ignorarClic) return;
+    if (clienteBajoPuntero) return abrirFicha(clienteBajoPuntero);   // el clic era sobre el nombre (el bloque tenía el puntero capturado)
     const s = S.cal.sesiones.find(x => x.id === t.dataset.id);
     if (s) modalSesion({ sesion: s });
+  },
+  'ses-ficha': t => {
+    if (ignorarClic) return;
+    abrirFicha(t.dataset.cliente);
   },
   'dia-nuevo': t => modalSesion({ fecha: t.dataset.fecha }),
   'dia-semana': t => { S.cal.fecha = t.dataset.fecha; S.cal.modo = 'semana'; return cargarCalendario(); },

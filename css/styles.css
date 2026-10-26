@@ -330,6 +330,10 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
 .sess-cobrada { margin-left: 4px; }
 .tabla tfoot td { border-top: 2px solid var(--border); border-bottom: none; padding-top: 12px; }
 
+/* Calendario: el nombre del cliente abre su ficha (el resto del bloque abre la sesión) */
+.nombre-ficha { cursor: pointer; }
+.nombre-ficha:hover { text-decoration: underline; }
+
 /* Cobros avisados por el entrenador, pendientes de validar */
 .chip.por-validar { border-color: var(--blue-light); color: var(--blue-light); background: rgba(74,159,212,.14); font-weight: 700; }
 .alert-por-validar { background: rgba(74,159,212,.1); border-color: var(--blue-light); color: var(--blue-light); }

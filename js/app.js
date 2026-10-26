@@ -73,6 +73,7 @@ const GLOBALES = {
     mostrarLogin();
   },
 };
+bus.irA = v => GLOBALES.vista({ dataset: { v } });   // cambia de pestaña desde otra vista (p. ej. del calendario a la ficha de un cliente)
 const ACCIONES = { ...GLOBALES, ...accionesCalendario, ...accionesClientes, ...accionesResumen, ...accionesComisiones, ...accionesAimHarder };
 
 document.addEventListener('click', async e => {
