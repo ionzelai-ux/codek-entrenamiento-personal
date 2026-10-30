@@ -703,6 +703,31 @@ export const importeAPagar = (comision, anticipos) => redondeo(comision - totalA
 // Mes en el que cae una fecha ISO ('2026-10-16' → '2026-10').
 export const mesDeFecha = fecha => String(fecha || '').slice(0, 7);
 
+// ── Nómina del entrenador y reparto de su comisión (sql/21) ───────────────────────────────────────────
+// Un entrenador con nómina cobra, como mínimo, esa nómina. De su comisión del mes se resta lo que ya se le ha dado:
+//   comisión (IVA fuera y % aplicado) − anticipos − COSTE EMPRESA de la nómina (bruto + SS de la empresa) = lo que queda por repartir.
+// Eso que queda se reparte entre NÓMINA (se suma al bruto: importe ÷ (1 + SS empresa %)) y EFECTIVO (se entrega tal cual).
+//   nomina = { bruto, coste_empresa, parte_nomina } del mes (o null si no hay nómina apuntada: no se resta nada)
+//   parteNomina = cuánto de lo que queda va a nómina (se limita a lo que quede; negativo o vacío = 0)
+// Si la comisión no llega a cubrir la nómina, `queda` sale negativo y `descubierto` dice cuánto falta; no se reparte nada.
+export function repartoNomina({ comision, anticipos = 0, nomina = null, parteNomina = null, ssPct = 0 }) {
+  const num = x => { const n = Number(x); return Number.isFinite(n) ? n : 0; };
+  const coste = nomina ? Math.max(0, num(nomina.coste_empresa)) : 0;
+  const bruto = nomina ? Math.max(0, num(nomina.bruto)) : 0;
+  const queda = redondeo(num(comision) - num(anticipos) - coste);
+  const reparto = Math.max(0, queda);
+  const pedido = Math.max(0, num(parteNomina ?? nomina?.parte_nomina));
+  const enNomina = redondeo(Math.min(reparto, pedido));
+  const brutoExtra = redondeo(enNomina / (1 + num(ssPct) / 100));
+  return {
+    comision: redondeo(num(comision)), anticipos: redondeo(num(anticipos)), coste, bruto,
+    queda, descubierto: queda < 0 ? redondeo(-queda) : 0, reparto,
+    enNomina, brutoExtra, ssExtra: redondeo(enNomina - brutoExtra),
+    efectivo: redondeo(reparto - enNomina),
+    brutoNuevo: redondeo(bruto + brutoExtra), costeNominaNuevo: redondeo(coste + enNomina),
+  };
+}
+
 // Entrenadores que participan en el sistema de comisiones (`aplica_comisiones` es true por defecto;
 // se puede desactivar uno concreto sin que deje de funcionar en el resto de la app).
 export const entrenadoresConComision = entrenadores => entrenadores.filter(e => e.aplica_comisiones !== false);

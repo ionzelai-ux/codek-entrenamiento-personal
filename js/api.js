@@ -136,6 +136,11 @@ export async function actualizarLineaManual(id, cambios) {
   return comprobar(await sb.from('comisiones_manual').update(cambios).eq('id', id).select().single());
 }
 export async function eliminarLineaManual(id) { comprobar(await sb.from('comisiones_manual').delete().eq('id', id)); }
+// Nómina del entrenador y reparto de su comisión (sql/21_nomina_entrenadores.sql): una fila por entrenador y mes.
+export async function listarNominasComision() { return comprobar(await sb.from('comisiones_nomina').select('*')); }
+export async function guardarNominaComision({ entrenador_id, mes, bruto, coste_empresa, parte_nomina }) {
+  return comprobar(await sb.from('comisiones_nomina').upsert({ entrenador_id, mes, bruto, coste_empresa, parte_nomina }, { onConflict: 'entrenador_id,mes' }).select().single());
+}
 // Anticipos a los entrenadores (sql/18_anticipos_entrenadores.sql): el administrador los gestiona; cada entrenador ve los suyos.
 export async function listarAnticipos() { return comprobar(await sb.from('comisiones_anticipos').select('*').order('fecha').order('created_at')); }
 export async function crearAnticipo(a) { return comprobar(await sb.from('comisiones_anticipos').insert(a).select().single()); }

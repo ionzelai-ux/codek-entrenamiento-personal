@@ -272,6 +272,19 @@ export async function eliminarLineaManual(id) {
   if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
   comisionesManual.splice(comisionesManual.findIndex(x => x.id === id), 1);
 }
+// Nómina del entrenador y reparto de su comisión (como sql/21): una fila por entrenador y mes; el administrador la gestiona y cada entrenador ve la suya.
+const nominasComision = [{ id: 'nom-demo', entrenador_id: 'p-edu', mes: hoyISO().slice(0, 7), bruto: 500, coste_empresa: 670, parte_nomina: 0 }];
+export async function listarNominasComision() {
+  return nominasComision.filter(n => actual.rol === 'admin' || n.entrenador_id === actual.id).map(clonar);
+}
+export async function guardarNominaComision({ entrenador_id, mes, bruto, coste_empresa, parte_nomina }) {
+  if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
+  if ([bruto, coste_empresa, parte_nomina].some(v => !(Number(v) >= 0))) throw new Error('new row for relation "comisiones_nomina" violates check constraint');
+  let n = nominasComision.find(x => x.entrenador_id === entrenador_id && x.mes === mes);
+  if (!n) { n = { id: nuevoId(), entrenador_id, mes }; nominasComision.push(n); }
+  Object.assign(n, { bruto, coste_empresa, parte_nomina });
+  return clonar(n);
+}
 // Anticipos a los entrenadores (como sql/18): el administrador los gestiona; cada entrenador solo ve los suyos.
 const anticipos = [];
 export async function listarAnticipos() {

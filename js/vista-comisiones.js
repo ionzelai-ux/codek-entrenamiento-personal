@@ -12,7 +12,7 @@ import { esc, fmtEUR, fmtFecha, nombreMes, etiquetaMetodo, toast, dialogo, filtr
 import { modalAnticipo } from './modales.js';
 import {
   hoyISO, primerDiaMes, liquidacionMes, lineasManualesMes, totalesComisiones, entrenadoresConComision,
-  anticiposDelMes, totalAnticipos, importeAPagar, DEFAULT_CONFIG_COMISIONES,
+  anticiposDelMes, totalAnticipos, repartoNomina, DEFAULT_CONFIG_COMISIONES,
 } from './logica.js';
 
 export async function cargarComisiones() {
@@ -36,6 +36,9 @@ export async function cargarComisiones() {
   // Igual con los anticipos (sql/18): si aún no existe la tabla, lo demás sigue funcionando.
   try { S.comisiones.anticipos = await S.api.listarAnticipos(); }
   catch (e) { S.comisiones.anticipos = []; if (admin) toast(`Anticipos no disponibles: ${e.message}`, true); }
+  // Y con la nómina de cada entrenador y el reparto nómina / efectivo (sql/21).
+  try { S.comisiones.nominas = await S.api.listarNominasComision(); }
+  catch (e) { S.comisiones.nominas = []; if (admin) toast(`Nóminas no disponibles: ${e.message}`, true); }
   S.comisiones.cargando = false;
   S.comisiones.cargado = true;
   bus.repintar();
@@ -46,9 +49,11 @@ function datos() {
   const filtro = entrenadorFiltroId();
   const idsConComision = new Set(entrenadoresConComision(S.entrenadores).map(e => e.id));
   const visible = id => idsConComision.has(id) && (!filtro || id === filtro);
-  const overridesObj = Object.fromEntries(S.comisiones.overrides);
+  // Lo que se cobra en nómina o en efectivo ya no se elige bono a bono: se reparte sobre el total del mes (ver repartoNomina).
+  // Por eso aquí todo se calcula sin el paso de la Seguridad Social, aunque algún bono guardado dijera «nómina».
+  const overridesObj = Object.fromEntries([...S.comisiones.overrides].map(([k, o]) => [k, { ...o, pago_entrenador: 'efectivo' }]));
   const filas = liquidacionMes(S.clientes.filter(c => visible(c.entrenador_id)), S.comisiones.mes, config, overridesObj);
-  const lineas = lineasManualesMes(filas, S.comisiones.libres.filter(l => visible(l.entrenador_id)), S.comisiones.mes, config, overridesObj);
+  const lineas = lineasManualesMes(filas, S.comisiones.libres.filter(l => visible(l.entrenador_id)).map(l => ({ ...l, pago_entrenador: 'efectivo' })), S.comisiones.mes, config, overridesObj);
   const anticipos = anticiposDelMes(S.comisiones.anticipos, S.comisiones.mes).filter(a => visible(a.entrenador_id));
   return { config, filtro, filas, lineas, anticipos, entrenadores: S.entrenadores.filter(e => visible(e.id)) };
 }
@@ -57,7 +62,7 @@ const plural = (n, uno, varios) => (n === 1 ? uno : varios);
 
 const cabeceraTabla = () => `<thead><tr>
   <th title="Desmarca para pasar este bono a «Ajustes manuales»">Incluir</th><th>Cliente</th><th class="num">Pagado el</th><th>Origen</th><th class="num">Importe</th>
-  <th>Declarado (IVA)</th><th>${esAdmin() ? 'Se le paga en' : 'Lo cobro en'}</th><th class="num">Base</th><th class="num">Comisión</th>
+  <th>Declarado (IVA)</th><th class="num">Base</th><th class="num">Comisión</th>
 </tr></thead>`;
 
 function filaHTML(f) {
@@ -70,10 +75,6 @@ function filaHTML(f) {
     <td class="num">${fmtEUR(b.precio)}</td>
     <td><label class="check check-sm"><input type="checkbox" data-acc="com-declarado" data-bono="${b.id}" ${f.declarado ? 'checked' : ''}>
       declarado</label>${b.metodo_pago ? ` <span class="hint">pagó: ${esc(etiquetaMetodo(b.metodo_pago))}</span>` : ''}</td>
-    <td><div class="seg seg-sm seg-inline">
-      <button class="${f.pagoEntrenador === 'efectivo' ? 'on' : ''}" data-acc="com-pago" data-bono="${b.id}" data-v="efectivo">Efectivo</button>
-      <button class="${f.pagoEntrenador === 'nomina' ? 'on' : ''}" data-acc="com-pago" data-bono="${b.id}" data-v="nomina">Nómina</button>
-    </div></td>
     <td class="num">${fmtEUR(f.base)}</td>
     <td class="num verde"><b>${fmtEUR(f.comision)}</b></td>
   </tr>`;
@@ -105,10 +106,6 @@ function lineaManualHTML(l) {
     <td class="num">${fmtEUR(l.importe)}</td>
     <td>${entradaNum(k, 'pct', l.pct_manual, String(l.pctDefecto))}</td>
     <td><label class="check check-sm"><input type="checkbox" data-acc="com-man-declarado" data-man="${k}" ${l.declarado ? 'checked' : ''}> declarado</label></td>
-    <td><div class="seg seg-sm seg-inline">
-      <button class="${l.pagoEntrenador === 'efectivo' ? 'on' : ''}" data-acc="com-man-pago" data-man="${k}" data-v="efectivo">Efectivo</button>
-      <button class="${l.pagoEntrenador === 'nomina' ? 'on' : ''}" data-acc="com-man-pago" data-man="${k}" data-v="nomina">Nómina</button>
-    </div></td>
     <td class="num verde"><b>${fmtEUR(l.comision)}</b></td>
     <td class="com-man-accion">${accion}</td>
   </tr>`;
@@ -117,7 +114,7 @@ function lineaManualHTML(l) {
 function seccionManualHTML(entrenadorId, lineas) {
   const tabla = lineas.length
     ? `<div class="tabla-wrap"><table class="tabla tabla-com tabla-man"><thead><tr>
-        <th>Concepto</th><th>Clases</th><th>€ / clase</th><th class="num">Importe</th><th>% comisión</th><th>Declarado (IVA)</th><th>Se le paga en</th><th class="num">Comisión</th><th></th>
+        <th>Concepto</th><th>Clases</th><th>€ / clase</th><th class="num">Importe</th><th>% comisión</th><th>Declarado (IVA)</th><th class="num">Comisión</th><th></th>
       </tr></thead><tbody>${lineas.map(lineaManualHTML).join('')}</tbody></table></div>
       <p class="hint">Importe = clases × € por clase. El % vacío usa el del origen del cliente (el que se ve en gris); después se aplican los mismos descuentos que arriba.</p>`
     : '<div class="hint">Aquí aparecen los bonos que excluyes (desmarcando «Incluir») y las líneas que añadas a mano.</div>';
@@ -143,24 +140,69 @@ function seccionAnticiposHTML(entrenadorId, lista) {
     ${admin ? `<button class="btn btn-secondary btn-sm" style="margin-top:8px" data-acc="com-ant-nuevo" data-ent="${entrenadorId}">+ Registrar anticipo</button>` : ''}`;
 }
 
-const subtotalHTML = (t, anticipos) => {
-  const ant = totalAnticipos(anticipos), apagar = importeAPagar(t.comision, anticipos);
-  return `<div class="com-subtotal">Facturado ${fmtEUR(t.importe)} · Comisión total <b>${fmtEUR(t.comision)}</b>
-  (efectivo ${fmtEUR(t.efectivo)} · nómina ${fmtEUR(t.nomina)}) · ${t.n} ${plural(t.n, 'bono', 'bonos')}${t.manuales
-    ? ` · <span class="com-aviso">${t.manuales} ${plural(t.manuales, 'ajuste manual', 'ajustes manuales')}: ${fmtEUR(t.comisionManual)}</span>` : ''}${ant
-    ? `<br>Anticipos ya entregados <b style="color:var(--red-light)">−${fmtEUR(ant)}</b> · <b>A pagar: ${fmtEUR(apagar)}</b>${apagar < 0
-      ? ` <span class="com-aviso">· Se le ha adelantado más de lo que cobra este mes: pasa el sobrante al mes siguiente con «→ Mes siguiente» o ajusta el anticipo.</span>` : ''}` : ''}</div>`;
-};
+// ── Nómina y reparto ──────────────────────────────────────────────────────
+// Un entrenador con nómina cobra como mínimo esa nómina. A su comisión del mes se le restan los anticipos y el COSTE EMPRESA de la
+// nómina; lo que queda lo reparte el administrador entre nómina (se suma al bruto, sin la SS de la empresa) y efectivo.
+// El administrador apunta el bruto, el coste empresa y cuánto va a nómina; el entrenador ve lo suyo y puede probar su reparto.
+const nominaDe = (entrenadorId, mes = S.comisiones.mes) => (S.comisiones.nominas || []).find(n => n.entrenador_id === entrenadorId && n.mes === mes) || null;
+const nominaAnterior = entrenadorId => (S.comisiones.nominas || []).filter(n => n.entrenador_id === entrenadorId && n.mes < S.comisiones.mes)
+  .sort((a, b) => b.mes.localeCompare(a.mes))[0] || null;
+const fmtNum = n => (n === null || n === undefined || n === '' || Number(n) === 0 ? '' : String(Math.round(Number(n) * 100) / 100).replace('.', ','));
+const entradaNomina = (entrenadorId, campo, valor, label, editable, placeholder = '0,00') => `<label class="nom-campo"><span>${label}</span>${editable
+  ? `<input class="form-input man-in" type="text" inputmode="decimal" autocomplete="off" data-nom="${entrenadorId}" data-campo="${campo}" value="${esc(fmtNum(valor))}" placeholder="${esc(placeholder)}">`
+  : `<b>${fmtEUR(valor || 0)}</b>`}</label>`;
+const filaReparto = (txt, valor, { signo = '', clase = '', detalle = '' } = {}) => `<tr class="${clase}"><td>${txt}${detalle ? ` <span class="hint">${detalle}</span>` : ''}</td><td class="num">${signo}${fmtEUR(Math.abs(valor))}</td></tr>`;
+
+function seccionNominaHTML(entrenadorId, comision, anticiposLista) {
+  const admin = esAdmin(), config = S.comisiones.config || DEFAULT_CONFIG_COMISIONES;
+  const nom = nominaDe(entrenadorId);
+  const r = repartoNomina({ comision, anticipos: totalAnticipos(anticiposLista), nomina: nom, ssPct: config.ss_pct });
+  const previa = !nom && admin ? nominaAnterior(entrenadorId) : null;
+  const campos = `<div class="nom-grid">
+      ${entradaNomina(entrenadorId, 'bruto', nom?.bruto, 'Bruto de su nómina (€)', admin)}
+      ${entradaNomina(entrenadorId, 'coste_empresa', nom?.coste_empresa, 'Coste empresa de la nómina (€)', admin)}
+      ${entradaNomina(entrenadorId, 'parte_nomina', nom?.parte_nomina, 'De lo que queda, en nómina (€)', true)}</div>`;
+  const aviso = !nom
+    ? `<div class="hint" style="margin:6px 0">${admin ? 'No hay nómina apuntada este mes: no se resta nada de su comisión.' : 'Todavía no hay nómina apuntada este mes.'}
+        ${previa ? `<button class="btn btn-sm btn-secondary" data-acc="com-nom-copiar" data-ent="${entrenadorId}">Copiar la de ${esc(nombreMes(previa.mes))} (coste ${fmtEUR(previa.coste_empresa)})</button>` : ''}</div>` : '';
+  const filas = [
+    filaReparto('Comisión del mes', r.comision),
+    r.anticipos ? filaReparto('Anticipos ya entregados', r.anticipos, { signo: '−' }) : '',
+    nom ? filaReparto('Coste empresa de su nómina', r.coste, { signo: '−', detalle: `bruto ${fmtEUR(r.bruto)} + SS de la empresa ${fmtEUR(r.coste - r.bruto)}` }) : '',
+    filaReparto('Queda por repartir', r.queda, { signo: r.queda < 0 ? '−' : '', clase: r.queda < 0 ? 'rep-total rep-neg' : 'rep-total' }),
+    r.queda > 0 ? filaReparto('→ En nómina', r.enNomina, { detalle: r.enNomina ? `se suman <b>${fmtEUR(r.brutoExtra)}</b> al bruto (${fmtEUR(r.enNomina)} ÷ ${(1 + config.ss_pct / 100).toLocaleString('es-ES', { maximumFractionDigits: 3 })}; la SS de la empresa se lleva ${fmtEUR(r.ssExtra)})` : '' }) : '',
+    r.queda > 0 ? filaReparto('→ En efectivo', r.efectivo, { clase: 'rep-efectivo' }) : '',
+  ].join('');
+  const resultado = r.queda > 0 && r.enNomina && nom
+    ? `<div class="hint" style="margin-top:6px">Su nómina quedaría en <b>${fmtEUR(r.brutoNuevo)}</b> de bruto (${fmtEUR(r.bruto)} + ${fmtEUR(r.brutoExtra)}), con un coste empresa total de <b>${fmtEUR(r.costeNominaNuevo)}</b>.</div>` : '';
+  const alerta = r.descubierto
+    ? `<div class="alert alert-warn" style="margin-top:8px">⚠ Su comisión no cubre la nómina: faltan <b>${fmtEUR(r.descubierto)}</b>. Su nómina es el mínimo que cobra, así que este mes no queda nada por repartir.
+        ${totalAnticipos(anticiposLista) ? 'Si hay anticipos, puedes pasarlos al mes siguiente con «→ Mes siguiente».' : ''}</div>` : '';
+  return `<div class="section-mini com-man-titulo">Nómina y reparto</div>${campos}${aviso}
+    <div class="tabla-wrap"><table class="tabla tabla-reparto"><tbody>${filas}</tbody></table></div>${resultado}${alerta}
+    ${admin ? '' : '<div class="hint">Puedes probar cuánto pasar a nómina; es solo una prueba, no se guarda.</div>'}`;
+}
+
+const subtotalHTML = t => `<div class="com-subtotal">Facturado ${fmtEUR(t.importe)} · Comisión total <b>${fmtEUR(t.comision)}</b>
+  · ${t.n} ${plural(t.n, 'bono', 'bonos')}${t.manuales
+    ? ` · <span class="com-aviso">${t.manuales} ${plural(t.manuales, 'ajuste manual', 'ajustes manuales')}: ${fmtEUR(t.comisionManual)}</span>` : ''}</div>`;
+
+// Lo que queda por repartir de un entrenador este mes (comisión − anticipos − coste empresa de su nómina).
+function quedaDe(e, filas, lineas, anticipos) {
+  const config = S.comisiones.config || DEFAULT_CONFIG_COMISIONES;
+  return repartoNomina({ comision: totalesComisiones(filas, lineas).comision, anticipos: totalAnticipos(anticipos), nomina: nominaDe(e.id), ssPct: config.ss_pct }).queda;
+}
 
 function grupoHTML(e, filas, lineas, anticipos) {
   const t = totalesComisiones(filas, lineas);
   return `<div class="com-grupo">
     <div class="com-grupo-title"><i class="tc" style="background:${e.color || '#888'}"></i>${esc(e.nombre)}
-      <span class="com-grupo-total" title="${anticipos.length ? 'Comisión menos anticipos' : 'Comisión'}">${fmtEUR(importeAPagar(t.comision, anticipos))}</span></div>
+      <span class="com-grupo-total" title="Comisión − anticipos − coste empresa de su nómina = lo que queda por repartir">${fmtEUR(quedaDe(e, filas, lineas, anticipos))}</span></div>
     ${tablaFilasHTML(filas.filter(f => !f.excluido))}
     ${seccionManualHTML(e.id, lineas)}
+    ${subtotalHTML(t)}
     ${seccionAnticiposHTML(e.id, anticipos)}
-    ${subtotalHTML(t, anticipos)}
+    ${seccionNominaHTML(e.id, t.comision, anticipos)}
   </div>`;
 }
 
@@ -169,23 +211,25 @@ function resultadoHTML() {
   if (filtro && !entrenadoresConComision(S.entrenadores).some(e => e.id === filtro)) {
     return `<div class="vacio">${esc(entrenadorDe(filtro)?.nombre || 'Este entrenador')} no está, por ahora, en el sistema de comisiones.</div>`;
   }
-  const grupos = entrenadores.map(e => grupoHTML(e, filas.filter(f => f.cliente.entrenador_id === e.id), lineas.filter(l => l.entrenador_id === e.id), anticipos.filter(a => a.entrenador_id === e.id)));
+  const delEntr = e => [filas.filter(f => f.cliente.entrenador_id === e.id), lineas.filter(l => l.entrenador_id === e.id), anticipos.filter(a => a.entrenador_id === e.id)];
+  const grupos = entrenadores.map(e => grupoHTML(e, ...delEntr(e)));
   if (filtro) return grupos.join('');
   return `${grupos.join('')}
-    <div class="com-total-general">TOTAL A LIQUIDAR <span>${fmtEUR(importeAPagar(totalesComisiones(filas, lineas).comision, anticipos))}</span></div>`;
+    <div class="com-total-general">TOTAL POR REPARTIR <span>${fmtEUR(entrenadores.reduce((t, e) => t + quedaDe(e, ...delEntr(e)), 0))}</span></div>`;
 }
 
 // Repinta resultados sin que se note: conserva el campo en el que se está escribiendo (con lo escrito tal cual,
 // por ejemplo «12,» a medias) y el punto de escritura.
+const selectorCampo = el => (el.dataset.nom ? `[data-nom="${el.dataset.nom}"][data-campo="${el.dataset.campo}"]` : `[data-man="${el.dataset.man}"][data-campo="${el.dataset.campo}"]`);
 function refrescarTabla() {
   const cont = document.querySelector('[data-comisiones-tabla]');
   if (!cont) return;
   const a = document.activeElement;
-  const foco = a && cont.contains(a) && a.dataset?.man && a.dataset.campo
-    ? { man: a.dataset.man, campo: a.dataset.campo, valor: a.value, ini: a.selectionStart, fin: a.selectionEnd } : null;
+  const foco = a && cont.contains(a) && (a.dataset?.man || a.dataset?.nom) && a.dataset.campo
+    ? { sel: selectorCampo(a), valor: a.value, ini: a.selectionStart, fin: a.selectionEnd } : null;
   cont.innerHTML = resultadoHTML();
   if (!foco) return;
-  const n = cont.querySelector(`[data-man="${foco.man}"][data-campo="${foco.campo}"]`);
+  const n = cont.querySelector(foco.sel);
   if (!n) return;
   n.value = foco.valor;
   n.focus();
@@ -202,20 +246,21 @@ function panelConfigHTML(config) {
       ${campo('comision_codek', 'Comisión · cliente Codek')}
       ${campo('comision_externo', 'Comisión · cliente externo')}
       ${campo('iva_pct', 'IVA a extraer si está declarado')}
-      ${campo('ss_pct', 'Seguridad Social si se paga en nómina')}
+      ${campo('ss_pct', 'Seguridad Social de la empresa (parte en nómina)')}
     </div>
     <div class="cfg-acciones">
       ${admin ? `<button class="btn btn-secondary btn-sm" data-acc="com-guardar-config">💾 Guardar condiciones</button>
         <span class="hint">Se recalcula al momento; guarda para que se recuerde la próxima vez.</span>`
         : '<span class="hint">Se recalcula al momento. Es solo una prueba: no se guarda.</span>'}
     </div>
-    <p class="hint" style="margin-top:6px">Fórmula: importe del bono → si está declarado, se divide entre 1&nbsp;+&nbsp;IVA/100 → si se paga en nómina, se
-      divide (sobre lo anterior) entre 1&nbsp;+&nbsp;Seg. Social/100 → sobre esa base se aplica el % de comisión según el origen del cliente.</p>`;
+    <p class="hint" style="margin-top:6px">Fórmula: importe del bono → si está declarado, se divide entre 1&nbsp;+&nbsp;IVA/100 → sobre esa base se aplica el % de comisión según
+      el origen del cliente (= comisión del mes). Después se restan los anticipos y el coste empresa de su nómina, y lo que queda se reparte entre
+      nómina (se suma al bruto dividido entre 1&nbsp;+&nbsp;Seg. Social/100) y efectivo.</p>`;
 }
 
 // Aviso fijo del entrenador: es una simulación, nada se guarda.
 const avisoSimulacionHTML = () => `<div class="alert alert-info alert-flex com-simulacion"><span>🧮 <b>SIMULACIÓN</b> — Parte de lo que ha decidido el administrador sobre lo tuyo: tus bonos cobrados de cada mes, lo que está excluido y sus ajustes manuales.
-  Encima puedes jugar con todo —«Incluir», «declarado», «efectivo / nómina», los porcentajes y los ajustes— para ver cómo salen los números: <b>nada de lo que cambies se guarda</b>
+  Encima puedes jugar con todo —«Incluir», «declarado», cuánto pasar a nómina, los porcentajes y los ajustes— para ver cómo salen los números: <b>nada de lo que cambies se guarda</b>
   ni modifica tu liquidación, que confirma el administrador.</span>
   <button class="btn btn-sm btn-secondary" data-acc="com-reset" title="Vuelve a lo que ha decidido el administrador">↺ Restablecer</button></div>`;
 
@@ -300,13 +345,35 @@ export function alGuardarManual(el) {
   return persistirManual(el.dataset.man, { [el.dataset.campo]: valorDeCampo(el) });
 }
 
+// ── Edición de la nómina (bruto, coste empresa y cuánto pasa a nómina) ─────
+// La fila del mes se crea vacía en pantalla si no existe; el administrador la guarda al soltar el campo, el entrenador solo la prueba.
+function filaNomina(entrenadorId) {
+  let n = nominaDe(entrenadorId);
+  if (!n) {
+    n = { id: `local-${Date.now()}`, entrenador_id: entrenadorId, mes: S.comisiones.mes, bruto: 0, coste_empresa: 0, parte_nomina: 0 };
+    S.comisiones.nominas = [...(S.comisiones.nominas || []), n];
+  }
+  return n;
+}
+const guardarNomina = async n => {
+  try { await S.api.guardarNominaComision({ entrenador_id: n.entrenador_id, mes: n.mes, bruto: n.bruto, coste_empresa: n.coste_empresa, parte_nomina: n.parte_nomina }); }
+  catch (e) { toast('No se pudo guardar: ' + e.message, true); }
+};
+export function alEditarNomina(el) {
+  filaNomina(el.dataset.nom)[el.dataset.campo] = Math.max(0, aNumero(el.value) ?? 0);
+  refrescarTabla();
+}
+export async function alGuardarNomina(el) {
+  if (!esAdmin()) return;   // las pruebas de un entrenador se quedan en pantalla: nunca se guardan
+  await guardarNomina(filaNomina(el.dataset.nom));
+}
+
 const moverMesCom = n => { S.comisiones.mes = primerDiaMes(S.comisiones.mes + '-01', n).slice(0, 7); bus.repintar(); };
 
 export const accionesComisiones = {
   'com-mes-prev': () => moverMesCom(-1),
   'com-mes-next': () => moverMesCom(1),
   'com-declarado': t => guardarOverride(t.dataset.bono, { declarado: t.checked }),
-  'com-pago': t => guardarOverride(t.dataset.bono, { pago_entrenador: t.dataset.v }),
   // Desmarcar «Incluir» pasa el bono a «Ajustes manuales» y deja el cursor en «Clases» para rellenarlo.
   'com-incluir': async t => {
     const bono = t.dataset.bono, excluir = !t.checked;
@@ -318,7 +385,6 @@ export const accionesComisiones = {
   },
   'com-reincluir': t => guardarOverride(t.dataset.bono, { excluido: false }),
   'com-man-declarado': t => cambiarManual(t.dataset.man, { declarado: t.checked }),
-  'com-man-pago': t => cambiarManual(t.dataset.man, { pago_entrenador: t.dataset.v }),
   'com-man-nueva': async t => {
     // El entrenador crea la línea solo en pantalla (con un id local); el administrador la guarda de verdad.
     const nueva = esAdmin()
@@ -338,6 +404,16 @@ export const accionesComisiones = {
     if (esAdmin()) await S.api.eliminarLineaManual(id);
     S.comisiones.libres = S.comisiones.libres.filter(x => x.id !== id);
     refrescarTabla();
+  },
+  // Nómina: copiar la del mes anterior (bruto y coste empresa; la parte en nómina empieza en 0)
+  'com-nom-copiar': async t => {
+    if (!esAdmin()) return;
+    const prev = nominaAnterior(t.dataset.ent);
+    if (!prev) return;
+    const n = filaNomina(t.dataset.ent);
+    Object.assign(n, { bruto: prev.bruto, coste_empresa: prev.coste_empresa, parte_nomina: 0 });
+    refrescarTabla();
+    await guardarNomina(n);
   },
   // Anticipos a los entrenadores (solo administrador)
   'com-ant-nuevo': t => modalAnticipo(t.dataset.ent),

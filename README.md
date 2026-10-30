@@ -146,6 +146,15 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
 - **Resumen → Facturación prevista**: la fecha de pago de cada bono decide en qué mes cuenta; muestra el total de
   dos meses seguidos (por defecto este y el siguiente; con ◀ ▶ se puede ir hacia atrás, p. ej. para ver lo que se
   cobró en septiembre), desglosado en pagado / pendiente de cobro / programado / **renovación prevista**, con el detalle de cada bono.
+- **Nómina y reparto de la comisión** (`sql/21_nomina_entrenadores.sql`): un entrenador con nómina cobra **como mínimo esa nómina**. En
+  Comisiones, cada entrenador tiene una sección «Nómina y reparto» con el bruto de su nómina del mes, el **coste empresa** (bruto + SS de
+  la empresa; sale de su nómina: p. ej. bruto + «total aportación empresarial») y «de lo que queda, en nómina». El cálculo, por orden:
+  comisión del mes (IVA fuera y % aplicado) − anticipos − coste empresa de la nómina = **queda por repartir**. Eso se reparte entre
+  **nómina** (se suma al bruto *importe ÷ (1 + SS %)*, con el SS de las condiciones, 32,5 % por defecto) y **efectivo** (se entrega tal
+  cual); nómina + efectivo + anticipos siempre suman la comisión. Si la comisión no cubre la nómina sale en rojo cuánto falta y no se
+  reparte nada. Si falta la nómina del mes hay un botón para copiar la del mes anterior. El IRPF no se calcula (se trabaja en bruto). Solo el
+  administrador lo guarda; cada entrenador ve lo suyo y puede probar cuánto pasar a nómina (no se guarda). Ya no se elige «efectivo / nómina»
+  bono a bono. Los datos reales de las nóminas no van en este repositorio (ver el script privado `09_nomina_eduardo_octubre.sql`).
 - **Calendario → ficha del cliente**: en cada sesión (vista de semana y de mes), un clic en el **nombre del cliente** abre su ficha en
   Clientes; un clic en cualquier otra parte del bloque abre la sesión para validarla, cambiarla o cancelarla. Arrastrar el bloque
   para cambiar su hora sigue funcionando también si se agarra por el nombre.
@@ -190,17 +199,17 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
 - **Comisiones** (`sql/08_comisiones.sql`; la gestiona el administrador y cada entrenador tiene una versión de solo simulación, ver más abajo): liquidación mensual de lo que se le paga
   a cada entrenador, sobre los bonos que el administrador confirmó como pagados ese mes. Por cada bono:
   importe del bono → si se trata como *declarado* (por defecto, tarjeta/transferencia; se puede forzar a mano) se
-  divide entre 1 + IVA/100 → si a el entrenador se le paga en *nómina* (elegible por bono) se divide otra vez, sobre
-  lo anterior, entre 1 + Seguridad Social/100 → sobre esa base se aplica el % de comisión según el origen del cliente
-  (Codek o traído por el propio entrenador). Los cuatro porcentajes son editables y recalculan al momento, como una
-  hoja de cálculo; el trato de cada bono y los porcentajes se guardan para la próxima vez. Un entrenador puede
+  divide entre 1 + IVA/100 → sobre esa base se aplica el % de comisión según el origen del cliente (Codek o traído por
+  el propio entrenador) = **comisión del mes**. (Hasta `sql/20` también se elegía «efectivo / nómina» bono a bono; ya no: ver
+  «Nómina y reparto» más abajo.) Los porcentajes son editables y recalculan al momento, como una hoja de cálculo; el trato de
+  cada bono y los porcentajes se guardan para la próxima vez. Un entrenador puede
   quedar fuera del sistema de comisiones (`perfiles.aplica_comisiones`, `sql/09_comisiones_entrenadores.sql`) sin que
   le afecte al resto de la app: solo desaparece de esta pestaña. Y para casos excepcionales (p. ej. el cliente no vino
   y hubo que contratar a otra persona) cada fila tiene una casilla **Incluir** (`sql/11_comisiones_excluir.sql`):
   al desmarcarla, el bono sale de la liquidación normal y **baja a «Ajustes manuales»** del entrenador
   (`sql/12_comisiones_manual.sql`), donde se escribe a mano cuántas clases ha dado él y a cuánto cobra cada una:
   importe = clases × € por clase, % de comisión editable (vacío = el del origen del cliente) y los mismos descuentos
-  de IVA / Seguridad Social con las casillas «Declarado» y «Efectivo/Nómina». Con «↩ Incluir» vuelve a la liquidación
+  de IVA con la casilla «Declarado». Con «↩ Incluir» vuelve a la liquidación
   normal. Además, «+ Añadir línea manual» crea líneas sueltas (concepto, clases, precio…) para ese entrenador y mes.
   Todo recalcula al escribir (también con coma decimal) y se guarda al soltar el campo; solo el administrador lo ve.
   **Pestaña de comisiones del entrenador** (`sql/14` y `sql/15`): cada entrenador que participa en el sistema de comisiones

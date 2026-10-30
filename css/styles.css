@@ -330,6 +330,16 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
 .sess-cobrada { margin-left: 4px; }
 .tabla tfoot td { border-top: 2px solid var(--border); border-bottom: none; padding-top: 12px; }
 
+/* Comisiones: nómina y reparto */
+.nom-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.nom-campo { display: flex; flex-direction: column; gap: 5px; font-family: var(--mono); font-size: 10px; letter-spacing: 1px; color: var(--muted); }
+.nom-campo b { font-size: 15px; color: var(--text); letter-spacing: 0; }
+.tabla-reparto { max-width: 640px; }
+.tabla-reparto td { padding: 7px 10px; }
+.tabla-reparto .rep-total td { border-top: 2px solid var(--border); font-weight: 700; }
+.tabla-reparto .rep-neg td { color: var(--red-light); }
+.tabla-reparto .rep-efectivo td { color: var(--green-light); }
+
 /* Calendario: el nombre del cliente abre su ficha (el resto del bloque abre la sesión) */
 .nombre-ficha { cursor: pointer; }
 .nombre-ficha:hover { text-decoration: underline; }
