@@ -198,7 +198,9 @@ export function estadoCobro(cliente, hoy = hoyISO(), ahora = new Date()) {
   const suma = l => Math.round(l.reduce((t, b) => t + (Number(b.precio) || 0), 0) * 100) / 100;
   const pendientes = bonos.filter(b => estadoPago(b, hoy) === 'pendiente');
   if (pendientes.length) return { clave: 'pendiente', importe: suma(pendientes), fecha: pendientes[0].fecha_pago, n: pendientes.length, bonos: pendientes };
-  const programados = bonos.filter(b => estadoPago(b, hoy) === 'programado');
+  // En pausa: lo ya vencido sin cobrar se sigue viendo (es dinero que debe), pero no se espera ningún pago ni renovación.
+  if (estaPausado(cliente, hoy)) { const u = bonos[bonos.length - 1]; return { clave: 'pausado', importe: Number(u.precio) || 0, fecha: u.fecha_pago, n: 0, bonos: [u] }; }
+  const programados = bonos.filter(b => estadoPago(b, hoy) === 'programado' && !estaPausado(cliente, b.fecha_pago));
   if (programados.length) return { clave: 'programado', importe: suma([programados[0]]), fecha: programados[0].fecha_pago, n: programados.length, bonos: programados };
   const ultimo = bonos[bonos.length - 1];
   // Quien entrena y paga después (aprobado) no renueva bonos: paga sesión a sesión, así que nunca toca «renovar».
@@ -210,6 +212,15 @@ export function estadoCobro(cliente, hoy = hoyISO(), ahora = new Date()) {
 // Se da por hecho que todo cliente con bono renueva, salvo que se marque `no_renueva`. Si va a cambiar de bono se guardan
 // `proximo_bono_sesiones` y `proximo_bono_precio`. No aplica a clientes que no son efectivos, archivados ni «paga después».
 export const aplicaRenovacion = c => c?.estado === 'efectivo' && c.activo !== false && !esDiferido(c);
+
+// ── Clientes en pausa (enfermedad, baja, viaje…): siguen en la lista pero no cuentan en las previsiones ──
+// `pausado` + `pausa_desde` (por defecto desde siempre) + `pausa_hasta` (día en que vuelve: ese día ya no está en pausa; vacío = hasta
+// que se reanude a mano). Las previsiones preguntan si está pausado EN LA FECHA que les interesa (la de un pago programado, la de una renovación…).
+export const estaPausado = (c, fecha = hoyISO()) => !!c?.pausado && (!c.pausa_desde || fecha >= c.pausa_desde) && (!c.pausa_hasta || fecha < c.pausa_hasta);
+// ¿Tiene una pausa en curso o por empezar? (la que se enseña en la ficha: una pausa cuyo día de vuelta ya pasó se da por terminada)
+export const pausaVigente = (c, hoy = hoyISO()) => !!c?.pausado && !(c.pausa_hasta && c.pausa_hasta <= hoy);
+// Cómo se cuenta una pausa: «enferma · desde el 31/10 · vuelve el 20/11» (el formato de la fecha lo pone quien lo pinta).
+export const textoPausa = (c, fmt = f => f) => [c.pausa_motivo, c.pausa_desde ? `desde el ${fmt(c.pausa_desde)}` : '', c.pausa_hasta ? `vuelve el ${fmt(c.pausa_hasta)}` : 'sin fecha de vuelta'].filter(Boolean).join(' · ');
 const porFechaHora = (a, b) => a.fecha.localeCompare(b.fecha) || String(a.hora).localeCompare(String(b.hora));
 // Sesiones que gastan crédito (reservadas, hechas, sin confirmar), por orden de fecha.
 const sesionesQueConsumen = (c, ahora) => (c.sesiones || []).filter(s => ocupaCredito(estadoEfectivo(s, ahora))).sort(porFechaHora);
@@ -220,7 +231,7 @@ const bonosConSesiones = c => (c.bonos || []).filter(b => b.tipo !== 'cobro' && 
 export function marcasBono(clientes, ahora = new Date()) {
   const marcas = new Map();
   for (const c of clientes) {
-    if (!aplicaRenovacion(c)) continue;
+    if (!aplicaRenovacion(c) || estaPausado(c, fechaISO(ahora))) continue;   // un cliente en pausa no necesita aviso de renovación
     const total = creditos(c, ahora).total;
     if (total < 1) continue;
     const lista = sesionesQueConsumen(c, ahora);
@@ -265,26 +276,34 @@ export function planProximoBono(cliente) {
 //   2) el siguiente bono es el que se haya indicado o el mismo del último; sus sesiones siguen sus días fijos y al acabarse
 //      toca la renovación siguiente, y así hasta `hasta`. Sin días fijos solo se puede proyectar la primera, y solo si ya se
 //      sabe el día en que acaba.
+//   Un cliente en pausa no se proyecta mientras dure la pausa: sin día de vuelta no se proyecta nada; con día de vuelta se proyecta
+//   como si empezara ese día (nunca cae una renovación dentro de la pausa).
 // Devuelve { filas: [{cliente, fecha, sesiones, importe, numero, cambiado}] ordenadas por fecha, sinEstimar: [clientes] }.
 export function proyectarRenovaciones(clientes, hoy = hoyISO(), hasta = ultimoDiaMes(primerDiaMes(hoy, 6)), ahora = new Date()) {
   const filas = [], sinEstimar = [];
   for (const c of clientes) {
     if (!aplicaRenovacion(c) || c.no_renueva) continue;
+    const pausadoYa = estaPausado(c, hoy);
+    if (pausadoYa && !c.pausa_hasta) continue;   // en pausa sin día de vuelta: fuera de la previsión
     const plan = planProximoBono(c);
     if (!plan || !(plan.sesiones > 0)) continue;
+    const arranque = pausadoYa ? c.pausa_hasta : hoy;   // el día desde el que se puede contar con él
     const total = creditos(c, ahora).total;
     const lista = sesionesQueConsumen(c, ahora);
     const dias = c.dias_fijos || [];
     let fin;
     if (lista.length >= total) fin = lista[total - 1].fecha;
     else {
-      const desde = lista.length ? addDias(lista[lista.length - 1].fecha, 1) : (plan.ultimo.fecha_inicio > hoy ? plan.ultimo.fecha_inicio : hoy);
+      let desde = lista.length ? addDias(lista[lista.length - 1].fecha, 1) : (plan.ultimo.fecha_inicio > arranque ? plan.ultimo.fecha_inicio : arranque);
+      if (pausadoYa && desde < arranque) desde = arranque;   // lo que le falta por entrenar no puede ser antes de que vuelva
       const extra = generarFechas({ desde, dias, cantidad: total - lista.length });
       if (extra.length < total - lista.length) { sinEstimar.push(c); continue; }
       fin = extra[extra.length - 1].fecha;
     }
-    let pago = fin < hoy ? hoy : fin;
-    for (let numero = 1; pago <= hasta && numero <= 60; numero++) {
+    let pago = fin < arranque ? arranque : fin;
+    for (let numero = 1; numero <= 60; numero++) {
+      if (estaPausado(c, pago)) { if (!c.pausa_hasta) break; pago = c.pausa_hasta; }   // una renovación que cae en la pausa se pasa al día de vuelta
+      if (pago > hasta) break;
       filas.push({ cliente: c, fecha: pago, sesiones: plan.sesiones, importe: plan.precio, numero, cambiado: numero === 1 && plan.cambiado });
       const gen = generarFechas({ desde: addDias(pago, 1), dias, cantidad: plan.sesiones });
       if (gen.length < plan.sesiones) break;
@@ -532,13 +551,14 @@ export function agrupar(clientes, clave, mes, hoy = hoyISO()) {
     const k = clave(c);
     if (!g.has(k)) g.set(k, { efectivos: 0, potenciales: 0, cobrado: 0, pendiente: 0, programado: 0, estimado: 0 });
     const r = g.get(k);
-    if (c.activo) {
+    if (c.activo && !estaPausado(c, hoy)) {   // en pausa no cuenta como efectivo ni como potencial
       if (c.estado === 'efectivo') r.efectivos++;
       else { r.potenciales++; r.estimado += Number(c.pot_precio) || 0; }
     }
     for (const b of c.bonos || []) {
       if (String(b.fecha_pago).slice(0, 7) !== mes) continue;
       const e = estadoPago(b, hoy);
+      if (e === 'programado' && estaPausado(c, b.fecha_pago)) continue;   // un pago programado dentro de su pausa no se espera
       r[e === 'pagado' ? 'cobrado' : e] += Number(b.precio) || 0;
     }
   }
@@ -551,7 +571,8 @@ export function sumar(filas) {
 }
 
 // Facturación prevista de un mes ('YYYY-MM') según las fechas de pago de los bonos: total, desglose por
-// estado (pagado / pendiente / programado) y la lista de bonos ordenada por fecha de pago.
+// estado (pagado / pendiente / programado) y la lista de bonos ordenada por fecha de pago. Los pagos programados de
+// un cliente que en esa fecha estará en pausa no se cuentan.
 export function facturacionMes(clientes, mes, hoy = hoyISO()) {
   const t = { total: 0, pagado: 0, pendiente: 0, programado: 0 };
   const filas = [];
@@ -559,6 +580,7 @@ export function facturacionMes(clientes, mes, hoy = hoyISO()) {
     for (const b of c.bonos || []) {
       if (String(b.fecha_pago).slice(0, 7) !== mes) continue;
       const estado = estadoPago(b, hoy), importe = Number(b.precio) || 0;
+      if (estado === 'programado' && estaPausado(c, b.fecha_pago)) continue;   // un pago programado dentro de su pausa no se espera
       t.total += importe; t[estado] += importe;
       filas.push({ cliente: c, bono: b, estado, importe });
     }

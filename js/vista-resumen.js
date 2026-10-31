@@ -2,7 +2,7 @@
 // atrás y adelante), y detalle por mes, entrenador y origen. Todo respeta el entrenador elegido.
 import { S, bus, entrenadorDe, nombreCompleto, entrenadorFiltroId } from './store.js';
 import { esc, nombreMes, fmtEUR, fmtFecha, filtroEntrenadorHTML } from './util.js';
-import { agrupar, sumar, facturacionMes, etiquetaMes, hoyISO, primerDiaMes, ultimoDiaMes, deudaDiferida, proyectarRenovaciones } from './logica.js';
+import { agrupar, sumar, facturacionMes, etiquetaMes, hoyISO, primerDiaMes, ultimoDiaMes, deudaDiferida, proyectarRenovaciones, pausaVigente, textoPausa } from './logica.js';
 
 const MESES_PROYECCION = 6;                                   // además del mes en curso
 const redondeo = n => Math.round(n * 100) / 100;
@@ -98,6 +98,14 @@ function proyeccionHTML(clientes, proy, hoy) {
       y que siguen renovando cada vez que lo gastan. Quien tenga marcado «No va a renovar» no cuenta. No incluye potenciales ni clientes que pagan después.</p>${sin}`;
 }
 
+// Clientes en pausa: no cuentan en las renovaciones previstas, ni en los pagos programados de su pausa, ni en los números de «Clientes».
+function pausadosHTML(clientes, hoy) {
+  const lista = clientes.filter(c => c.activo && pausaVigente(c, hoy)).sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es'));
+  if (!lista.length) return '';
+  return `<div class="alert alert-info proy-pausados">⏸ <b>${lista.length} cliente${lista.length === 1 ? '' : 's'} en pausa</b> — no cuenta${lista.length === 1 ? '' : 'n'} en las previsiones mientras dure:
+    ${lista.map(c => `${nombreConEntr(c)} <span class="hint">(${esc(textoPausa(c, fmtFecha))})</span>`).join(' · ')}.</div>`;
+}
+
 export function renderResumen(el) {
   const mes = S.resumenMes, hoy = hoyISO();
   const filtro = entrenadorFiltroId();                       // null = todos los entrenadores
@@ -128,6 +136,7 @@ export function renderResumen(el) {
       «Programado» = fecha de pago futura; «Renovación prevista» = lo que se estima que pagarán al acabárseles el bono (no es un pago registrado).</p>
 
     ${proyeccionHTML(clientes, proy, hoy)}
+    ${pausadosHTML(clientes, hoy)}
     ${deudasHTML(clientes)}
     <div class="section-title">Detalle por mes</div>
     <div class="cal-nav" style="margin-bottom:18px">

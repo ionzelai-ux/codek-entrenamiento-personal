@@ -17,7 +17,8 @@ js/api.js             acceso a Supabase (login, clientes, bonos, sesiones)
 js/api-mock.js        modo demo en memoria (?demo)
 js/app.js             arranque, login, navegación
 js/vista-*.js         calendario · clientes · resumen · comisiones (admin)
-js/modales.js         formularios: sesión, ficha, bono, convertir, generar sesiones
+js/modales.js         formularios: sesión, ficha, bono, convertir, generar sesiones, pausa
+js/liquidacion*.js    cierre de la liquidación: copia fija, CSV y hoja para imprimir
 sql/                  scripts para Supabase (ejecutar en orden)
 tests/                node --test tests/*.test.js
 ```
@@ -155,6 +156,19 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   reparte nada. Si falta la nómina del mes hay un botón para copiar la del mes anterior. El IRPF no se calcula (se trabaja en bruto). Solo el
   administrador lo guarda; cada entrenador ve lo suyo y puede probar cuánto pasar a nómina (no se guarda). Ya no se elige «efectivo / nómina»
   bono a bono. Los datos reales de las nóminas no van en este repositorio (ver el script privado `09_nomina_eduardo_octubre.sql`).
+- **Cerrar la liquidación** (`sql/23_cerrar_liquidaciones.sql`): en Comisiones, cada entrenador tiene el botón «🔒 Cerrar liquidación». Guarda
+  una **copia fija** del mes (bonos, comisiones, ajustes manuales, anticipos, nómina y reparto) y la bloquea **también en la base de datos**:
+  mientras esté cerrada no se pueden cambiar los ajustes por bono, las líneas manuales, los anticipos ni la nómina de ese mes, ni el importe,
+  la fecha de cobro o el método de un bono cobrado ese mes (ni crear o borrar bonos cobrados en él, ni borrar al cliente o pasarlo a otro
+  entrenador). La pantalla enseña esa copia en solo lectura: no cambia aunque cambien precios, porcentajes o clientes. Solo el administrador
+  cierra y puede «🔓 Reabrir» (queda apuntado cuántas veces y cuándo; para guardarla otra vez hay que volver a cerrarla). Cada entrenador ve
+  su liquidación cerrada. «🖨 Imprimir / PDF» abre una hoja limpia lista para imprimir o guardar como PDF y «⬇ Excel (CSV)» la descarga para
+  Excel (también del borrador, de una liquidación sin cerrar). El código está en `js/liquidacion.js` (copia fija y CSV) y `js/liquidacion-doc.js` (hoja).
+- **Clientes en pausa** (`sql/22_pausar_clientes.sql`): enfermedad, baja, viaje… En la ficha, «⏸ Pausar» (motivo, desde cuándo y, opcional, el día
+  que vuelve; ese día se reanuda solo) y «▶ Reanudar». Un cliente en pausa sigue en la lista (etiqueta «⏸ EN PAUSA», filtro «Pausados») pero no
+  cuenta en las previsiones: ni su renovación prevista (si vuelve un día concreto se proyecta desde que vuelve), ni sus **pagos programados**
+  dentro de la pausa, ni las marcas ⚡/🏁 del calendario ni el aviso de «renovar», ni los clientes/potenciales ni el estimado del Resumen.
+  Lo ya cobrado y lo vencido sin cobrar se siguen viendo. El Resumen lista los clientes en pausa. Lo puede hacer el administrador y el entrenador del cliente.
 - **Calendario → ficha del cliente**: en cada sesión (vista de semana y de mes), un clic en el **nombre del cliente** abre su ficha en
   Clientes; un clic en cualquier otra parte del bloque abre la sesión para validarla, cambiarla o cancelarla. Arrastrar el bloque
   para cambiar su hora sigue funcionando también si se agarra por el nombre.

@@ -44,10 +44,12 @@ export function abrirModal(html, clase = '') {
   document.getElementById('modales').appendChild(ov);
   return m;
 }
-document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape') return;
-  [...document.querySelectorAll('#modales .modal-overlay')].pop()?._cerrar?.();
-});
+if (typeof document !== 'undefined') {   // (sin DOM, p. ej. en las pruebas con Node, solo se usan las funciones de formato)
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    [...document.querySelectorAll('#modales .modal-overlay')].pop()?._cerrar?.();
+  });
+}
 
 // Diálogo de confirmación. `mensaje` es HTML: escapa lo que venga de datos con esc().
 export function dialogo({ titulo, mensaje, ok = 'Aceptar', cancelar = 'Cancelar', peligro = false }) {

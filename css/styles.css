@@ -396,6 +396,19 @@ body.arrastrando-sesion, body.arrastrando-sesion * { cursor: grabbing !important
   color: var(--red); border-top: 3px solid var(--red); padding-top: 14px; margin-top: 6px; }
 .com-total-general span { font-size: 34px; color: var(--green-light); }
 
+/* Clientes en pausa */
+.alert-pausa { background: rgba(160,160,160,.1); border-color: #888; color: #c8c8c8; }
+.proy-pausados { margin-top: 12px; font-size: 12px; line-height: 1.7; }
+
+/* Liquidación cerrada: franja con lo que se puede hacer (imprimir, exportar, reabrir) y barra de acciones de una abierta */
+.com-barra { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; margin: 0 0 10px; }
+.com-cerrada { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 12px; padding: 10px 14px;
+  border: 1px solid var(--green-light); background: rgba(92,184,92,.08); color: var(--green-light); font-family: var(--mono); font-size: 12px; line-height: 1.5; }
+.com-cerrada b { color: var(--text); }
+.com-cerrada .com-barra { margin: 0; }
+.com-grupo.cerrado .tabla-com td, .com-grupo.cerrado .tabla-reparto td { cursor: default; }
+.chip.cerrada { border-color: var(--green-light); color: var(--green-light); }
+
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--dark); }
 ::-webkit-scrollbar-thumb { background: var(--red-dark); }

@@ -148,6 +148,19 @@ export async function actualizarAnticipo(id, cambios) {
   return comprobar(await sb.from('comisiones_anticipos').update(cambios).eq('id', id).select().single());
 }
 export async function eliminarAnticipo(id) { comprobar(await sb.from('comisiones_anticipos').delete().eq('id', id)); }
+// Liquidaciones cerradas (sql/23_cerrar_liquidaciones.sql): copia fija de la liquidación de un entrenador y mes. Solo el administrador
+// cierra y reabre; cada entrenador ve las suyas. Mientras esté cerrada, la base de datos impide cambiar lo que la altera.
+export async function listarCierresLiquidacion() { return comprobar(await sb.from('liquidaciones_cerradas').select('*')); }
+export async function cerrarLiquidacion({ entrenador_id, mes, datos }) {
+  const previa = comprobar(await sb.from('liquidaciones_cerradas').select('id').eq('entrenador_id', entrenador_id).eq('mes', mes).maybeSingle());
+  const q = previa
+    ? sb.from('liquidaciones_cerradas').update({ datos, reabierta_el: null }).eq('id', previa.id)   // estaba reabierta: se vuelve a cerrar con datos nuevos
+    : sb.from('liquidaciones_cerradas').insert({ entrenador_id, mes, datos });
+  return comprobar(await q.select().single());
+}
+export async function reabrirLiquidacion(id) {
+  return comprobar(await sb.from('liquidaciones_cerradas').update({ reabierta_el: new Date().toISOString() }).eq('id', id).select().single());
+}
 // Upsert parcial: solo se guarda lo que cambia (ver sql/08_comisiones.sql), el otro campo del bono no se toca.
 export async function guardarOverrideComision(bono_id, cambios) {
   return comprobar(await sb.from('comisiones_bono').upsert({ bono_id, ...cambios }, { onConflict: 'bono_id' }).select().single());

@@ -7,7 +7,7 @@ import {
   creditos, estadoEfectivo, ocupaCredito, diaSemana,
   sesionesCambiables, horaNueva, planCambioHorario, diasFijosActualizados,
   esDiferido, deudaDiferida, planCobroSesiones, planPagoRecibido, modoDiferido, planProximoBono, mesDeFecha,
-  bonosAvisables, bonosAvisados, cambiosValidarCobro, estadoPago, avisosDiferido,
+  bonosAvisables, bonosAvisados, cambiosValidarCobro, estadoPago, avisosDiferido, pausaVigente,
 } from './logica.js';
 import { OPCIONES_BONO, DURACION_SESION_MIN } from './config.js';
 
@@ -817,6 +817,41 @@ export function modalProximoBono(c) {
     m.cerrar();
     await bus.recargar();
     toast(igual ? 'Próximo bono: igual que el último' : `Próximo bono: ${sesiones} sesiones · ${fmtEUR(precio)}`);
+  });
+}
+
+// ── Pausar a un cliente (enfermedad, baja, viaje…): deja de contar en las previsiones hasta que vuelva ──
+export function modalPausa(c) {
+  const hoy = hoyISO(), ya = pausaVigente(c, hoy);
+  const m = abrirModal(`
+    <div class="modal-title">${ya ? 'Cambiar la pausa' : 'Pausar cliente'}</div>
+    <p class="sub">${esc(nombreCompleto(c))}</p>
+    <form novalidate>
+      <div class="form-group"><label class="form-label">Motivo</label>
+        <input class="form-input" name="motivo" type="text" autocomplete="off" placeholder="p. ej. enferma, de baja, de viaje" value="${esc(ya ? c.pausa_motivo : '')}"></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">En pausa desde *</label>
+          <input class="form-input" name="desde" type="date" value="${esc((ya && c.pausa_desde) || hoy)}"></div>
+        <div class="form-group"><label class="form-label">Vuelve el (opcional)</label>
+          <input class="form-input" name="hasta" type="date" value="${esc((ya && c.pausa_hasta) || '')}">
+          <div class="hint">Ese día se reanuda solo. Si no lo sabes aún, déjalo vacío y reanúdalo a mano.</div></div>
+      </div>
+      <div class="hint">Mientras esté en pausa no cuenta en la previsión de ingresos (ni su renovación prevista ni sus pagos programados) ni en los avisos de renovar.
+        No se archiva ni se borra nada: sus bonos y sesiones siguen como están.</div>
+      ${acciones(ya ? 'Guardar cambios' : 'Pausar')}
+    </form>`, 'modal-lg');
+  const form = m.el.querySelector('form');
+  bindCerrar(m);
+  alEnviar(m, form, async () => {
+    const val = nuevoValidador(m.el);
+    const desde = form.elements.desde.value, hasta = form.elements.hasta.value;
+    val.exige(desde, 'desde', 'fecha de inicio');
+    val.cierra();
+    if (hasta && hasta <= desde) throw new Error('El día de vuelta tiene que ser posterior al día en que empieza la pausa.');
+    await S.api.guardarCliente({ id: c.id, pausado: true, pausa_motivo: form.elements.motivo.value.trim(), pausa_desde: desde, pausa_hasta: hasta || null });
+    m.cerrar();
+    await bus.recargar();
+    toast(ya ? 'Pausa actualizada' : `${nombreCompleto(c)} en pausa: ya no cuenta en las previsiones`);
   });
 }
 

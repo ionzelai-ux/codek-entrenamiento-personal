@@ -5,12 +5,12 @@ import {
   hoyISO, creditos, consumoPorBono, estadoEfectivo, estadoPago, estadoCobro, edad, camposPendientes, tieneLesionActiva,
   incidenciasCliente, revisionDatos, esDiferido, deudaDiferida, modoDiferido,
   bonoVigente, planProximoBono, proyectarRenovaciones, primerDiaMes, ultimoDiaMes,
-  cobroAvisado, bonosAvisados, resumenPorValidar, avisosDiferido,
+  cobroAvisado, bonosAvisados, resumenPorValidar, avisosDiferido, estaPausado, pausaVigente, textoPausa,
 } from './logica.js';
 import {
   modalCliente, modalConvertir, modalBono, modalEditarBono, modalGenerar, modalCambiarHorario, modalSesion, cambiarEstadoSesion,
   modalTarifaDiferido, modalCobrarSesiones, modalPagoRecibido, modalModoDiferido, modalProximoBono, modalAvisarCobro, modalValidarCobro,
-  modalAvisarCobroDiferido, modalValidarAvisoDiferido,
+  modalAvisarCobroDiferido, modalValidarAvisoDiferido, modalPausa,
 } from './modales.js';
 
 const ETIQUETA = { reservada: 'RESERV.', hecha: 'HECHA', no_vino: 'NO VINO', auto: 'AUTO' };
@@ -35,6 +35,7 @@ function filtrados() {
       if (f === 'solicitud') return c.pago_diferido === 'solicitado';                     // solicitudes de «paga después» por aprobar
       if (f === 'deuda') return !!deudaDiferida(c)?.debe;                                // aprobados con algo por cobrar
       if (f === 'validar') return bonosAvisados(c).length > 0 || avisosDiferido(c).length > 0;   // cobros que ha avisado el entrenador y faltan por validar
+      if (f === 'pausado') return pausaVigente(c, hoy);                                    // en pausa (o con la pausa por empezar)
       return estadoCobro(c, hoy)?.clave === f;
     })
     .sort((a, b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es'));
@@ -69,7 +70,7 @@ function cobrosHTML() {
 // Fila de pago de la lista: estado + fecha/importe (+ botón para marcar pagado, solo el administrador).
 const CHIP_COBRO = {
   pendiente: ['pendiente', 'PENDIENTE DE PAGO'], programado: ['amarillo', 'PAGO PROGRAMADO'],
-  renovar: ['rojo', 'RENOVAR'], pagado: ['verde', 'PAGADO'],
+  renovar: ['rojo', 'RENOVAR'], pagado: ['verde', 'PAGADO'], pausado: ['gris', 'EN PAUSA'],
 };
 // Quién avisó de un cobro (el entrenador que lo apuntó; si falta, el del cliente).
 const quienAviso = (c, b) => entrenadorDe(b.cobro_avisado_por)?.nombre || entrenadorDe(c.entrenador_id)?.nombre || 'El entrenador';
@@ -108,6 +109,7 @@ function pagoHTML(c) {
   const e = estadoCobro(c, hoyISO());
   if (!e || e.clave === 'sin_bono') return '';
   if (esDiferido(c) && e.clave !== 'pendiente' && e.clave !== 'programado') return '';   // sus cobros ya pagados no hace falta repetirlos
+  if (e.clave === 'pausado') return `<div class="pago-row"><span class="pago-txt">${esc(textoPausa(c, fmtFecha))}</span></div>${avisoCobroHTML(c)}`;   // la etiqueta «EN PAUSA» ya sale con los chips
   const aviso = avisoCobroHTML(c);
   // Lo que ya ha avisado el entrenador sale en su propia fila: aquí solo lo que sigue sin avisar.
   const sinAvisar = e.clave === 'pendiente' || e.clave === 'programado' ? e.bonos.filter(b => !cobroAvisado(b)) : e.bonos;
@@ -130,6 +132,9 @@ const chipDiferido = c => (c.pago_diferido === 'aprobado' ? '<span class="chip d
 const chipsTipo = c => `
   <span class="chip ${c.estado === 'efectivo' ? 'verde' : 'amarillo'}">${c.estado === 'efectivo' ? 'CLIENTE' : 'POTENCIAL'}</span>
   <span class="chip ${c.origen === 'codek' ? 'granate' : 'gris'}">${c.origen === 'codek' ? 'CODEK' : 'EXTERNO'}</span>${c.estado === 'efectivo' ? chipDiferido(c) : ''}`;
+
+// «⏸ EN PAUSA» (o «PAUSA DESDE 05/11» si todavía no ha empezado). No cuenta en las previsiones mientras dure.
+const chipPausa = c => (c.activo && pausaVigente(c) ? `<span class="chip gris" title="${esc(textoPausa(c, fmtFecha))}">⏸ ${estaPausado(c) ? 'EN PAUSA' : `PAUSA DESDE ${esc(fmtFecha(c.pausa_desde).slice(0, 5))}`}</span>` : '');
 
 function itemHTML(c) {
   let extra;
@@ -155,7 +160,7 @@ function itemHTML(c) {
   return `<div class="client-item ${S.cliSel === c.id ? 'active' : ''} ${c.activo ? '' : 'archivado'}" data-acc="cli-sel" data-id="${c.id}">
     ${esAdmin() ? `<button class="item-borrar" data-acc="cli-borrar" data-id="${c.id}" title="Eliminar ficha" aria-label="Eliminar ficha">🗑</button>` : ''}
     <div class="client-name">${esc(nombreCompleto(c))}</div>
-    <div class="chips">${chipsTipo(c)}${c.estado === 'efectivo' && c.activo && !dif && creditos(c).sinBono ? `<span class="chip rojo" title="Tiene sesiones hechas que ningún bono cubre">⚠ ${creditos(c).sinBono} SIN BONO</span>` : ''}${tieneLesionActiva(c.lesiones) ? '<span class="chip lesion" title="Tiene lesiones o limitaciones registradas">🩹 LESIÓN</span>' : ''}${esAdmin() && !entrenadorFiltroId() ? `<span class="chip" style="border-color:${entrenadorDe(c.entrenador_id)?.color};color:${entrenadorDe(c.entrenador_id)?.color}">${esc(entrenadorDe(c.entrenador_id)?.nombre || '')}</span>` : ''}${c.activo ? '' : '<span class="chip gris">ARCHIVADO</span>'}${c.activo && camposPendientes(c).length ? '<span class="chip pendiente" title="Faltan datos por completar">INFO PENDIENTE</span>' : ''}</div>
+    <div class="chips">${chipsTipo(c)}${c.estado === 'efectivo' && c.activo && !dif && creditos(c).sinBono ? `<span class="chip rojo" title="Tiene sesiones hechas que ningún bono cubre">⚠ ${creditos(c).sinBono} SIN BONO</span>` : ''}${chipPausa(c)}${tieneLesionActiva(c.lesiones) ? '<span class="chip lesion" title="Tiene lesiones o limitaciones registradas">🩹 LESIÓN</span>' : ''}${esAdmin() && !entrenadorFiltroId() ? `<span class="chip" style="border-color:${entrenadorDe(c.entrenador_id)?.color};color:${entrenadorDe(c.entrenador_id)?.color}">${esc(entrenadorDe(c.entrenador_id)?.nombre || '')}</span>` : ''}${c.activo ? '' : '<span class="chip gris">ARCHIVADO</span>'}${c.activo && camposPendientes(c).length ? '<span class="chip pendiente" title="Faltan datos por completar">INFO PENDIENTE</span>' : ''}</div>
     ${pagoHTML(c)}
     ${extra}</div>`;
 }
@@ -239,6 +244,11 @@ function fichaHTML(c) {
       <button class="btn btn-sm btn-secondary" data-acc="cli-editar" data-id="${c.id}">Completar</button></div>`;
   }
   if (!c.activo) alertas += '<div class="alert alert-warn">ARCHIVADO — no aparece en las listas normales.</div>';
+  if (efe && c.activo && pausaVigente(c, hoy)) {
+    alertas += `<div class="alert alert-pausa alert-flex"><span>⏸ <b>${estaPausado(c, hoy) ? 'EN PAUSA' : 'PAUSA PROGRAMADA'}</b> — ${esc(textoPausa(c, fmtFecha))}. No cuenta en la previsión de ingresos ni en los avisos de renovar mientras dure.</span>
+      <span class="dif-acciones"><button class="btn btn-sm btn-secondary" data-acc="cli-pausar" data-id="${c.id}">Cambiar</button>
+      <button class="btn btn-sm btn-cobrar" data-acc="cli-reanudar" data-id="${c.id}">▶ Reanudar</button></span></div>`;
+  }
   if (efe) {
     if (dif) {
       // Entrena y paga después: no se avisa de «sin bono»; se avisa de lo que debe.
@@ -258,6 +268,7 @@ function fichaHTML(c) {
             : `<button class="btn btn-sm btn-secondary" data-acc="cobd-deshacer" data-id="${a.id}">Deshacer aviso</button>`}</div>`;
       }
     } else if (!cr.total) alertas += '<div class="alert alert-warn">Sin bono: añade uno para poder registrar sesiones.</div>';
+    else if (estaPausado(c, hoy)) { /* en pausa: no hace falta avisar de que se le acaba el bono */ }
     else if (cr.restantes === 0) alertas += '<div class="alert alert-danger">⚠ BONO AGOTADO — el cliente necesita renovar.</div>';
     else if (cr.restantes <= 2) alertas += `<div class="alert alert-warn">⚡ Solo quedan ${cr.restantes} sesión${cr.restantes === 1 ? '' : 'es'} — avisa al cliente.</div>`;
     if (!dif && cr.libres < 0) alertas += `<div class="alert alert-warn">Hay ${-cr.libres} sesión${cr.libres === -1 ? '' : 'es'} reservada${cr.libres === -1 ? '' : 's'} de más para los créditos que quedan.</div>`;
@@ -277,7 +288,7 @@ function fichaHTML(c) {
           : `<button class="btn btn-sm btn-cobrar" data-acc="cob-avisar" data-id="${c.id}">💶 Avisar cobro</button>`}</div>`;
     }
     for (const b of c.bonos || []) if (estadoPago(b, hoy) === 'programado') {
-      alertas += `<div class="alert alert-info">💶 Pago programado el ${fmtFecha(b.fecha_pago)} (${fmtEUR(b.precio)}).</div>`;
+      alertas += `<div class="alert alert-info">💶 Pago programado el ${fmtFecha(b.fecha_pago)} (${fmtEUR(b.precio)}).${estaPausado(c, b.fecha_pago) ? ' <span class="hint">Cae dentro de su pausa: no cuenta en la previsión de ingresos.</span>' : ''}</div>`;
     }
   }
 
@@ -286,7 +297,8 @@ function fichaHTML(c) {
     ${efe ? `<button class="btn btn-primary btn-sm btn-w" data-acc="cli-sesion" data-id="${c.id}">+ Sesión</button>
       <button class="recharge-btn" data-acc="cli-bono" data-id="${c.id}">+ Nuevo bono</button>
       <button class="btn btn-secondary btn-sm btn-w" data-acc="cli-generar" data-id="${c.id}">⚙ Generar sesiones</button>
-      <button class="btn btn-secondary btn-sm btn-w" data-acc="cli-horario" data-id="${c.id}">🕘 Cambiar horario en bloque</button>`
+      <button class="btn btn-secondary btn-sm btn-w" data-acc="cli-horario" data-id="${c.id}">🕘 Cambiar horario en bloque</button>
+      ${c.activo && !pausaVigente(c, hoy) ? `<button class="btn btn-secondary btn-sm btn-w" data-acc="cli-pausar" data-id="${c.id}" title="Enfermedad, baja, viaje…: deja de contar en las previsiones">⏸ Pausar</button>` : ''}`
       : `<button class="btn btn-primary btn-sm btn-w" data-acc="cli-convertir" data-id="${c.id}">✔ Convertir en cliente</button>`}
     <button class="btn btn-secondary btn-sm btn-w" data-acc="cli-archivar" data-id="${c.id}">${c.activo ? '🗄 Archivar' : '↩ Reactivar'}</button>
     ${esAdmin() ? `<button class="btn btn-danger btn-sm btn-w" data-acc="cli-borrar" data-id="${c.id}">🗑 Eliminar ficha</button>` : ''}`;
@@ -420,7 +432,7 @@ function fichaHTML(c) {
       <div class="client-actions">${botones}</div>
     </div>
     ${efe && c.activo ? panelDiferidoHTML(c) : ''}
-    ${efe && c.activo && !dif ? panelRenovacionHTML(c) : ''}
+    ${efe && c.activo && !dif && !pausaVigente(c, hoy) ? panelRenovacionHTML(c) : ''}
     ${cuerpo}`;
 }
 
@@ -478,7 +490,7 @@ export function renderClientes(el) {
         ${esAdmin() ? filtroEntrenadorHTML(S.entrenadores, S.filtroEntr) : ''}
         ${seg('estado', [['todos', 'Todos'], ['potencial', 'Potenciales'], ['efectivo', 'Clientes']])}
         ${seg('origen', [['todos', 'Todos'], ['codek', 'Codek'], ['externo', 'Externos']])}
-        ${seg('pago', [['todos', 'Pago: todos'], ['pendiente', 'Pendiente'], ['programado', 'Programado'], ['pagado', 'Pagado'], ['renovar', 'Renovar'],
+        ${seg('pago', [['todos', 'Pago: todos'], ['pendiente', 'Pendiente'], ['programado', 'Programado'], ['pagado', 'Pagado'], ['renovar', 'Renovar'], ['pausado', 'Pausados'],
           ...(S.cli.pago === 'deuda' ? [['deuda', 'Por cobrar']] : []), ...(S.cli.pago === 'solicitud' ? [['solicitud', 'Solicitudes']] : [])])}
         <label class="check check-sm"><input type="checkbox" data-acc="cli-pendientes" ${S.cli.pendientes ? 'checked' : ''}> Solo con info pendiente</label>
         <label class="check check-sm"><input type="checkbox" data-acc="cli-archivados" ${S.cli.archivados ? 'checked' : ''}> Ver archivados</label>
@@ -549,6 +561,9 @@ export const accionesClientes = {
   'ren-quitar': t => cambiarRenovacion(t, { proximo_bono_sesiones: null, proximo_bono_precio: null }, 'Próximo bono: igual que el último'),
   'ren-cambiar': t => modalProximoBono(clienteDe(t.dataset.id)),
   'dif-modo': t => modalModoDiferido(clienteDe(t.dataset.id)),
+  // Pausa (enfermedad, baja, viaje…): el cliente deja de contar en las previsiones hasta que se reanude (a mano o el día de vuelta).
+  'cli-pausar': t => modalPausa(clienteDe(t.dataset.id)),
+  'cli-reanudar': t => cambiarRenovacion(t, { pausado: false, pausa_motivo: '', pausa_desde: null, pausa_hasta: null }, 'Reanudado: vuelve a contar en las previsiones'),
   'cobro-deshacer': async t => {
     const c = clienteDe(S.cliSel), b = c?.bonos.find(x => x.id === t.dataset.id);
     if (!esAdmin() || !b) return;

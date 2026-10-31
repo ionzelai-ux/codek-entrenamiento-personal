@@ -13,6 +13,13 @@ const perfiles = [
 ];
 const clientes = [], bonos = [], sesiones = [];
 let actual = null;
+// Liquidaciones cerradas (como sql/23): mientras una esté cerrada no se puede tocar nada que la cambie (las mismas comprobaciones que los disparadores).
+const cierres = [];
+const cerrada = (entrenadorId, mes) => cierres.some(c => c.entrenador_id === entrenadorId && c.mes === mes && !c.reabierta_el);
+const mesDe = f => (f ? String(f).slice(0, 7) : null);
+const ERR_CERRADA = (mes, que = 'cambiar esto') => new Error(`La liquidación de ${mes} de este entrenador está cerrada. Reábrela en Comisiones para poder ${que}.`);
+const bloquear = (entrenadorId, mes, que) => { if (mes && cerrada(entrenadorId, mes)) throw ERR_CERRADA(mes, que); };
+const entrenadorDelBono = b => clientes.find(c => c.id === b?.cliente_id)?.entrenador_id;
 
 function cliente(datos) {
   const c = { id: nuevoId(), apellidos: '', telefono: '', email: '', fecha_nacimiento: null, notas: '', activo: true,
@@ -81,6 +88,11 @@ function sesion(c, fecha, hora, estado = 'reservada') {
   bono(dani, 4, 160, addDias(lun, -10), addDias(lun, -10), 'efectivo', addDias(lun, -10));
   [-8, -5].forEach(n => sesion(dani, addDias(lun, n), '08:00', 'hecha'));
   [1, 4].forEach(n => sesion(dani, addDias(lun, n), '08:00'));
+  // En pausa (enferma) con día de vuelta dentro de tres semanas: no entra en las previsiones mientras dure
+  const paula = cliente({ entrenador_id: 'p-edu', nombre: 'Paula', apellidos: 'Demo En Pausa', estado: 'efectivo', origen: 'codek', telefono: '600 000 011', lesiones: 'Ninguna',
+    dias_fijos: [{ dia: 2, hora: '20:00' }, { dia: 4, hora: '20:00' }], pausado: true, pausa_motivo: 'enferma', pausa_desde: addDias(hoy, -3), pausa_hasta: addDias(hoy, 21) });
+  bono(paula, 8, 336, addDias(lun, -20), addDias(lun, -20), 'tarjeta', addDias(lun, -19));
+  [-18, -16, -13, -11, -9].forEach(n => sesion(paula, addDias(lun, n), '20:00', 'hecha'));
   // Bono con pago programado para el mes siguiente
   const ivan = cliente({ entrenador_id: 'p-edu', nombre: 'Iván', apellidos: 'Demo Ortiz', estado: 'efectivo', origen: 'externo', telefono: '600 000 004' });
   bono(ivan, 8, 336, addDias(hoy.slice(0, 7) + '-01', 35).slice(0, 7) + '-05', addDias(hoy.slice(0, 7) + '-01', 35).slice(0, 7) + '-05', 'transferencia');
@@ -191,6 +203,7 @@ export async function guardarCliente(c) {
     const ex = clientes.find(x => x.id === id);
     if (!ex || !idsVisibles().has(id)) throw new Error('Cliente no encontrado');
     controlPagoDiferido(ex, campos);
+    if (campos.entrenador_id && campos.entrenador_id !== ex.entrenador_id) bloquearClienteConCobros(ex, 'pasarla a otro entrenador');
     Object.assign(ex, campos);
     return clonar(ex);
   }
@@ -200,14 +213,21 @@ export async function guardarCliente(c) {
 }
 export async function eliminarCliente(id) {
   if (actual.rol !== 'admin') throw new Error('Solo el administrador puede eliminar');
+  bloquearClienteConCobros(clientes.find(c => c.id === id), 'eliminarla');
   for (const arr of [bonos, sesiones]) for (let i = arr.length - 1; i >= 0; i--) if (arr[i].cliente_id === id) arr.splice(i, 1);
   clientes.splice(clientes.findIndex(c => c.id === id), 1);
+}
+// Como el disparador de clientes (sql/23): un cliente con bonos cobrados en un mes cerrado ni se borra ni pasa a otro entrenador.
+function bloquearClienteConCobros(c, que) {
+  const b = c && bonos.find(x => x.cliente_id === c.id && x.pagado_el && cerrada(c.entrenador_id, mesDe(x.pagado_el)));
+  if (b) throw new Error(`Este cliente tiene bonos cobrados en la liquidación cerrada de ${mesDe(b.pagado_el)}. Reábrela en Comisiones o archiva la ficha en lugar de ${que}.`);
 }
 // Como el disparador de la base de datos: solo el administrador confirma (o deshace) un pago.
 const SOLO_ADMIN_PAGO = 'Solo el administrador puede cambiar el estado de pago de un bono';
 export async function crearBono(b) {
   if (actual.rol !== 'admin' && b.pagado_el) throw new Error(SOLO_ADMIN_PAGO);
   if (actual.rol !== 'admin' && b.tipo === 'cobro') throw new Error('Solo el administrador puede registrar cobros');
+  if (b.pagado_el) bloquear(clientes.find(c => c.id === b.cliente_id)?.entrenador_id, mesDe(b.pagado_el), 'registrar un cobro en ese mes');
   const n = { id: nuevoId(), pagado_el: null, tipo: 'bono', ...b }; bonos.push(n); return clonar(n);
 }
 export async function actualizarBono(id, cambios) {
@@ -215,6 +235,10 @@ export async function actualizarBono(id, cambios) {
   if (!b || !idsVisibles().has(b.cliente_id)) throw new Error('Bono no encontrado');
   if (actual.rol !== 'admin' && 'pagado_el' in cambios && (cambios.pagado_el || null) !== (b.pagado_el || null)) throw new Error(SOLO_ADMIN_PAGO);
   const antes = { ...b };
+  // Como el disparador de bonos (sql/23): importe, fecha de cobro o método de un bono cobrado en un mes cerrado no se tocan.
+  const ent = entrenadorDelBono(b), nuevo = { ...b, ...cambios };
+  if (b.pagado_el && ['precio', 'pagado_el', 'metodo_pago', 'tipo', 'cliente_id'].some(k => (nuevo[k] ?? null) !== (b[k] ?? null))) bloquear(ent, mesDe(b.pagado_el), 'cambiar este bono');
+  if (nuevo.pagado_el && (nuevo.pagado_el !== b.pagado_el || nuevo.precio !== b.precio)) bloquear(ent, mesDe(nuevo.pagado_el), 'registrar un cobro en ese mes');
   Object.assign(b, cambios);
   // Como el disparador sql/19: un cobro avisado lo firma quien lo avisa, no se puede avisar de un cobro ni del futuro, y al pagarse se borra.
   const limpiar = () => { b.cobro_avisado_el = null; b.cobro_avisado_metodo = null; b.cobro_avisado_por = null; b.cobro_avisado_en = null; };
@@ -228,6 +252,8 @@ export async function actualizarBono(id, cambios) {
   return clonar(b);
 }
 export async function eliminarBono(id) {
+  const viejo = bonos.find(b => b.id === id);
+  if (viejo?.pagado_el) bloquear(entrenadorDelBono(viejo), mesDe(viejo.pagado_el), 'cambiar este bono');
   bonos.splice(bonos.findIndex(b => b.id === id), 1);
   for (const s of sesiones) if (s.cobro_bono_id === id) s.cobro_bono_id = null;   // como el on delete set null de la base de datos
 }
@@ -258,6 +284,7 @@ export async function listarLineasManuales() {
 export async function crearLineaManual(l) {
   if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
   const n = { id: nuevoId(), concepto: '', clases: null, precio: null, pct: null, declarado: false, pago_entrenador: 'efectivo', ...l };
+  bloquear(n.entrenador_id, n.mes);
   comisionesManual.push(n);
   return clonar(n);
 }
@@ -265,11 +292,15 @@ export async function actualizarLineaManual(id, cambios) {
   if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
   const n = comisionesManual.find(x => x.id === id);
   if (!n) throw new Error('Línea no encontrada');
+  bloquear(n.entrenador_id, n.mes);
+  bloquear(n.entrenador_id, cambios.mes ?? n.mes);
   Object.assign(n, cambios);
   return clonar(n);
 }
 export async function eliminarLineaManual(id) {
   if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
+  const vieja = comisionesManual.find(x => x.id === id);
+  if (vieja) bloquear(vieja.entrenador_id, vieja.mes);
   comisionesManual.splice(comisionesManual.findIndex(x => x.id === id), 1);
 }
 // Nómina del entrenador y reparto de su comisión (como sql/21): una fila por entrenador y mes; el administrador la gestiona y cada entrenador ve la suya.
@@ -280,6 +311,7 @@ export async function listarNominasComision() {
 export async function guardarNominaComision({ entrenador_id, mes, bruto, coste_empresa, parte_nomina }) {
   if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
   if ([bruto, coste_empresa, parte_nomina].some(v => !(Number(v) >= 0))) throw new Error('new row for relation "comisiones_nomina" violates check constraint');
+  bloquear(entrenador_id, mes);
   let n = nominasComision.find(x => x.entrenador_id === entrenador_id && x.mes === mes);
   if (!n) { n = { id: nuevoId(), entrenador_id, mes }; nominasComision.push(n); }
   Object.assign(n, { bruto, coste_empresa, parte_nomina });
@@ -298,6 +330,7 @@ export async function crearAnticipo(a) {
   if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
   const n = { id: nuevoId(), fecha: hoyISO(), concepto: '', ...a };
   comprobarAnticipo(n);
+  bloquear(n.entrenador_id, n.mes);
   anticipos.push(n);
   return clonar(n);
 }
@@ -307,15 +340,21 @@ export async function actualizarAnticipo(id, cambios) {
   if (!n) throw new Error('Anticipo no encontrado');
   const nuevo = { ...n, ...cambios };
   comprobarAnticipo(nuevo);
+  bloquear(n.entrenador_id, n.mes);
+  bloquear(nuevo.entrenador_id, nuevo.mes);
   Object.assign(n, cambios);
   return clonar(n);
 }
 export async function eliminarAnticipo(id) {
   if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
+  const viejo = anticipos.find(x => x.id === id);
+  if (viejo) bloquear(viejo.entrenador_id, viejo.mes);
   anticipos.splice(anticipos.findIndex(x => x.id === id), 1);
 }
 export async function guardarOverrideComision(bono_id, cambios) {
   if (actual.rol !== 'admin') throw new Error(SOLO_ADMIN_COMISION);
+  const bono = bonos.find(x => x.id === bono_id);
+  if (bono?.pagado_el) bloquear(entrenadorDelBono(bono), mesDe(bono.pagado_el));
   let o = comisionesBono.find(x => x.bono_id === bono_id);
   if (!o) { o = { bono_id, declarado: null, pago_entrenador: 'efectivo', excluido: false, manual_clases: null, manual_precio: null, manual_pct: null }; comisionesBono.push(o); }
   Object.assign(o, cambios);
@@ -401,4 +440,24 @@ export async function eliminarCobroAvisado(id) {
   const i = cobrosAvisados.findIndex(a => a.id === id);
   if (i < 0 || !idsVisibles().has(cobrosAvisados[i].cliente_id)) throw new Error('No se ha podido quitar el aviso (puede que ya no exista).');
   cobrosAvisados.splice(i, 1);
+}
+
+// Liquidaciones cerradas (como sql/23): solo el administrador cierra y reabre; cada entrenador ve las suyas.
+export async function listarCierresLiquidacion() {
+  return cierres.filter(c => actual.rol === 'admin' || c.entrenador_id === actual.id).map(clonar);
+}
+export async function cerrarLiquidacion({ entrenador_id, mes, datos }) {
+  if (actual.rol !== 'admin') throw new Error('new row violates row-level security policy for table "liquidaciones_cerradas"');
+  let c = cierres.find(x => x.entrenador_id === entrenador_id && x.mes === mes);
+  if (c && !c.reabierta_el) throw new Error('Esta liquidación está cerrada y no se puede modificar. Reábrela primero.');
+  if (!c) { c = { id: nuevoId(), entrenador_id, mes, reaperturas: 0, ultima_reapertura: null }; cierres.push(c); }
+  Object.assign(c, { datos: clonar(datos), cerrada_el: new Date().toISOString(), cerrada_por: actual.id, reabierta_el: null });
+  return clonar(c);
+}
+export async function reabrirLiquidacion(id) {
+  if (actual.rol !== 'admin') throw new Error('Solo el administrador puede reabrir una liquidación');
+  const c = cierres.find(x => x.id === id);
+  if (!c || c.reabierta_el) throw new Error('Esta liquidación ya está abierta.');
+  Object.assign(c, { reabierta_el: new Date().toISOString(), ultima_reapertura: new Date().toISOString(), reaperturas: c.reaperturas + 1 });
+  return clonar(c);
 }

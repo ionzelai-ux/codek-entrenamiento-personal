@@ -14,11 +14,13 @@ import {
   hoyISO, primerDiaMes, liquidacionMes, lineasManualesMes, totalesComisiones, entrenadoresConComision,
   anticiposDelMes, totalAnticipos, repartoNomina, DEFAULT_CONFIG_COMISIONES,
 } from './logica.js';
+import { instantaneaLiquidacion, estaCerrada, csvLiquidacion, nombreArchivo } from './liquidacion.js';
+import { hojaLiquidacionHTML } from './liquidacion-doc.js';
 
 export async function cargarComisiones() {
   const admin = esAdmin();
   // El entrenador juega con lo que ya tiene en pantalla: si vuelve a la pestaña no se le borran sus pruebas.
-  if (!admin && S.comisiones.cargado) { bus.repintar(); return; }
+  if (!admin && S.comisiones.cargado) { await cargarCierres(admin); bus.repintar(); return; }
   S.comisiones.cargando = true;
   bus.repintar();
   try {
@@ -39,9 +41,16 @@ export async function cargarComisiones() {
   // Y con la nómina de cada entrenador y el reparto nómina / efectivo (sql/21).
   try { S.comisiones.nominas = await S.api.listarNominasComision(); }
   catch (e) { S.comisiones.nominas = []; if (admin) toast(`Nóminas no disponibles: ${e.message}`, true); }
+  await cargarCierres(admin);
   S.comisiones.cargando = false;
   S.comisiones.cargado = true;
   bus.repintar();
+}
+
+// Liquidaciones cerradas (sql/23): si aún no existe la tabla, lo demás sigue funcionando (sin poder cerrar).
+async function cargarCierres(admin) {
+  try { S.comisiones.cierres = await S.api.listarCierresLiquidacion(); S.comisiones.cierresDisponibles = true; }
+  catch (e) { S.comisiones.cierres = []; S.comisiones.cierresDisponibles = false; if (admin) toast(`Cerrar liquidaciones no disponible: ${e.message}`, true); }
 }
 
 function datos() {
@@ -165,22 +174,28 @@ function seccionNominaHTML(entrenadorId, comision, anticiposLista) {
   const aviso = !nom
     ? `<div class="hint" style="margin:6px 0">${admin ? 'No hay nómina apuntada este mes: no se resta nada de su comisión.' : 'Todavía no hay nómina apuntada este mes.'}
         ${previa ? `<button class="btn btn-sm btn-secondary" data-acc="com-nom-copiar" data-ent="${entrenadorId}">Copiar la de ${esc(nombreMes(previa.mes))} (coste ${fmtEUR(previa.coste_empresa)})</button>` : ''}</div>` : '';
+  return `<div class="section-mini com-man-titulo">Nómina y reparto</div>${campos}${aviso}
+    ${repartoHTML(r, !!nom, config.ss_pct, !!totalAnticipos(anticiposLista))}
+    ${admin ? '' : '<div class="hint">Puedes probar cuánto pasar a nómina; es solo una prueba, no se guarda.</div>'}`;
+}
+
+// La tabla del reparto (comisión − anticipos − coste empresa = queda → nómina / efectivo), con su aviso si la comisión no cubre la nómina.
+// La usan la liquidación abierta (calculada al momento) y la cerrada (la copia guardada).
+function repartoHTML(r, hayNomina, ssPct, hayAnticipos) {
   const filas = [
     filaReparto('Comisión del mes', r.comision),
     r.anticipos ? filaReparto('Anticipos ya entregados', r.anticipos, { signo: '−' }) : '',
-    nom ? filaReparto('Coste empresa de su nómina', r.coste, { signo: '−', detalle: `bruto ${fmtEUR(r.bruto)} + SS de la empresa ${fmtEUR(r.coste - r.bruto)}` }) : '',
+    hayNomina ? filaReparto('Coste empresa de su nómina', r.coste, { signo: '−', detalle: `bruto ${fmtEUR(r.bruto)} + SS de la empresa ${fmtEUR(r.coste - r.bruto)}` }) : '',
     filaReparto('Queda por repartir', r.queda, { signo: r.queda < 0 ? '−' : '', clase: r.queda < 0 ? 'rep-total rep-neg' : 'rep-total' }),
-    r.queda > 0 ? filaReparto('→ En nómina', r.enNomina, { detalle: r.enNomina ? `se suman <b>${fmtEUR(r.brutoExtra)}</b> al bruto (${fmtEUR(r.enNomina)} ÷ ${(1 + config.ss_pct / 100).toLocaleString('es-ES', { maximumFractionDigits: 3 })}; la SS de la empresa se lleva ${fmtEUR(r.ssExtra)})` : '' }) : '',
+    r.queda > 0 ? filaReparto('→ En nómina', r.enNomina, { detalle: r.enNomina ? `se suman <b>${fmtEUR(r.brutoExtra)}</b> al bruto (${fmtEUR(r.enNomina)} ÷ ${(1 + ssPct / 100).toLocaleString('es-ES', { maximumFractionDigits: 3 })}; la SS de la empresa se lleva ${fmtEUR(r.ssExtra)})` : '' }) : '',
     r.queda > 0 ? filaReparto('→ En efectivo', r.efectivo, { clase: 'rep-efectivo' }) : '',
   ].join('');
-  const resultado = r.queda > 0 && r.enNomina && nom
+  const resultado = r.queda > 0 && r.enNomina && hayNomina
     ? `<div class="hint" style="margin-top:6px">Su nómina quedaría en <b>${fmtEUR(r.brutoNuevo)}</b> de bruto (${fmtEUR(r.bruto)} + ${fmtEUR(r.brutoExtra)}), con un coste empresa total de <b>${fmtEUR(r.costeNominaNuevo)}</b>.</div>` : '';
   const alerta = r.descubierto
     ? `<div class="alert alert-warn" style="margin-top:8px">⚠ Su comisión no cubre la nómina: faltan <b>${fmtEUR(r.descubierto)}</b>. Su nómina es el mínimo que cobra, así que este mes no queda nada por repartir.
-        ${totalAnticipos(anticiposLista) ? 'Si hay anticipos, puedes pasarlos al mes siguiente con «→ Mes siguiente».' : ''}</div>` : '';
-  return `<div class="section-mini com-man-titulo">Nómina y reparto</div>${campos}${aviso}
-    <div class="tabla-wrap"><table class="tabla tabla-reparto"><tbody>${filas}</tbody></table></div>${resultado}${alerta}
-    ${admin ? '' : '<div class="hint">Puedes probar cuánto pasar a nómina; es solo una prueba, no se guarda.</div>'}`;
+        ${hayAnticipos ? 'Si hay anticipos, puedes pasarlos al mes siguiente con «→ Mes siguiente».' : ''}</div>` : '';
+  return `<div class="tabla-wrap"><table class="tabla tabla-reparto"><tbody>${filas}</tbody></table></div>${resultado}${alerta}`;
 }
 
 const subtotalHTML = t => `<div class="com-subtotal">Facturado ${fmtEUR(t.importe)} · Comisión total <b>${fmtEUR(t.comision)}</b>
@@ -189,8 +204,60 @@ const subtotalHTML = t => `<div class="com-subtotal">Facturado ${fmtEUR(t.import
 
 // Lo que queda por repartir de un entrenador este mes (comisión − anticipos − coste empresa de su nómina).
 function quedaDe(e, filas, lineas, anticipos) {
+  const cierre = cierreDe(e.id);
+  if (cierre) return cierre.datos.reparto.queda;   // cerrada: lo que se guardó, no lo que saldría ahora
   const config = S.comisiones.config || DEFAULT_CONFIG_COMISIONES;
   return repartoNomina({ comision: totalesComisiones(filas, lineas).comision, anticipos: totalAnticipos(anticipos), nomina: nominaDe(e.id), ssPct: config.ss_pct }).queda;
+}
+
+// ── Cerrar la liquidación (sql/23) ────────────────────────────────────────
+// Una liquidación cerrada es la copia fija que se guardó: se enseña esa copia (solo lectura) y la base de datos impide tocar lo que la cambiaría.
+const registroCierre = (entrenadorId, mes = S.comisiones.mes) => (S.comisiones.cierres || []).find(c => c.entrenador_id === entrenadorId && c.mes === mes) || null;
+const cierreDe = (entrenadorId, mes = S.comisiones.mes) => { const c = registroCierre(entrenadorId, mes); return estaCerrada(c) ? c : null; };
+
+const botonesExportar = e => `<button class="btn btn-secondary btn-sm" data-acc="com-imprimir" data-ent="${e.id}" title="Abre la hoja lista para imprimir o guardar como PDF">🖨 Imprimir / PDF</button>
+  <button class="btn btn-secondary btn-sm" data-acc="com-csv" data-ent="${e.id}" title="Descarga una hoja que se abre en Excel">⬇ Excel (CSV)</button>`;
+
+// Barra de una liquidación abierta (solo el administrador): borrador para imprimir y botón de cerrar.
+function barraAbiertaHTML(e) {
+  if (!esAdmin()) return '';
+  const reg = registroCierre(e.id);
+  const reabierta = reg?.reabierta_el ? `<span class="hint">Reabierta el ${fmtFecha(String(reg.reabierta_el).slice(0, 10))} (${reg.reaperturas} ${reg.reaperturas === 1 ? 'vez' : 'veces'}): corrígela y vuelve a cerrarla.</span>` : '';
+  const cerrar = S.comisiones.cierresDisponibles === false ? '' : `<button class="btn btn-primary btn-sm" data-acc="com-cerrar" data-ent="${e.id}" title="Guarda una copia fija y bloquea este mes">🔒 Cerrar liquidación</button>`;
+  return `<div class="com-barra">${reabierta}${botonesExportar(e)}${cerrar}</div>`;
+}
+
+const filaBonoCerradaHTML = b => `<tr><td>${esc(b.cliente)}</td><td class="num">${fmtFecha(b.pagado_el)}</td>
+  <td><span class="chip ${b.origen === 'codek' ? 'granate' : 'gris'}">${b.origen === 'codek' ? 'CODEK' : 'EXTERNO'}</span> <span class="hint">${b.pct}%</span></td>
+  <td class="num">${fmtEUR(b.importe)}</td><td>${b.declarado ? 'declarado' : 'sin declarar'}${b.metodo_pago ? ` <span class="hint">pagó: ${esc(etiquetaMetodo(b.metodo_pago))}</span>` : ''}</td>
+  <td class="num">${fmtEUR(b.base)}</td><td class="num verde"><b>${fmtEUR(b.comision)}</b></td></tr>`;
+
+function grupoCerradoHTML(e, cierre) {
+  const d = cierre.datos, admin = esAdmin();
+  const quien = d.cerrada_por ? ` por <b>${esc(d.cerrada_por)}</b>` : '';
+  const veces = cierre.reaperturas ? ` · reabierta ${cierre.reaperturas} ${cierre.reaperturas === 1 ? 'vez' : 'veces'}` : '';
+  const bonos = d.bonos.length
+    ? `<div class="tabla-wrap"><table class="tabla tabla-com"><thead><tr><th>Cliente</th><th class="num">Pagado el</th><th>Origen</th><th class="num">Importe</th><th>Declarado (IVA)</th><th class="num">Base</th><th class="num">Comisión</th></tr></thead>
+       <tbody>${d.bonos.map(filaBonoCerradaHTML).join('')}</tbody></table></div>`
+    : '<div class="vacio">Sin bonos en la liquidación normal este mes</div>';
+  const manuales = d.manuales.length
+    ? `<div class="section-mini com-man-titulo">Ajustes manuales</div><div class="tabla-wrap"><table class="tabla tabla-com"><thead><tr><th>Concepto</th><th class="num">Clases</th><th class="num">€ / clase</th><th class="num">Importe</th><th class="num">% comisión</th><th>Declarado (IVA)</th><th class="num">Comisión</th></tr></thead>
+       <tbody>${d.manuales.map(l => `<tr><td>${esc(l.concepto)}${l.bono_excluido ? ' <span class="chip gris">BONO EXCLUIDO</span>' : ''}</td><td class="num">${l.clases ?? ''}</td><td class="num">${l.precio === null ? '' : fmtEUR(l.precio)}</td>
+         <td class="num">${fmtEUR(l.importe)}</td><td class="num">${l.pct}%</td><td>${l.declarado ? 'declarado' : 'sin declarar'}</td><td class="num verde"><b>${fmtEUR(l.comision)}</b></td></tr>`).join('')}</tbody></table></div>` : '';
+  const anticipos = d.anticipos.length
+    ? `<div class="section-mini com-man-titulo">Anticipos entregados</div><div class="tabla-wrap"><table class="tabla tabla-com"><thead><tr><th class="num">Fecha</th><th>Nota</th><th class="num">Importe</th></tr></thead>
+       <tbody>${d.anticipos.map(a => `<tr><td class="num">${fmtFecha(a.fecha)}</td><td>${esc(a.concepto || 'Anticipo')}</td><td class="num" style="color:var(--red-light)"><b>−${fmtEUR(a.importe)}</b></td></tr>`).join('')}</tbody></table></div>` : '';
+  const nomina = d.nomina
+    ? `<div class="nom-grid">${entradaNomina(e.id, 'bruto', d.nomina.bruto, 'Bruto de su nómina (€)', false)}${entradaNomina(e.id, 'coste_empresa', d.nomina.coste_empresa, 'Coste empresa de la nómina (€)', false)}${entradaNomina(e.id, 'parte_nomina', d.nomina.parte_nomina, 'De lo que queda, en nómina (€)', false)}</div>` : '';
+  return `<div class="com-grupo cerrado">
+    <div class="com-grupo-title"><i class="tc" style="background:${e.color || '#888'}"></i>${esc(e.nombre)} <span class="chip cerrada">🔒 CERRADA</span>
+      <span class="com-grupo-total" title="Lo que quedaba por repartir al cerrar">${fmtEUR(d.reparto.queda)}</span></div>
+    <div class="com-cerrada"><span>🔒 <b>LIQUIDACIÓN CERRADA</b> el ${fmtFecha(String(cierre.cerrada_el).slice(0, 10))}${quien}${veces}. Es una copia fija: no cambia aunque cambien precios, porcentajes o clientes, y no se puede modificar.</span>
+      <span class="com-barra">${botonesExportar(e)}${admin ? `<button class="btn btn-secondary btn-sm" data-acc="com-reabrir" data-ent="${e.id}" title="Desbloquea este mes para corregirlo">🔓 Reabrir</button>` : ''}</span></div>
+    ${bonos}${manuales}
+    ${subtotalHTML(d.totales)}${anticipos}
+    <div class="section-mini com-man-titulo">Nómina y reparto</div>${nomina}${repartoHTML(d.reparto, !!d.nomina, d.config.ss_pct, false)}
+  </div>`;
 }
 
 function grupoHTML(e, filas, lineas, anticipos) {
@@ -198,6 +265,7 @@ function grupoHTML(e, filas, lineas, anticipos) {
   return `<div class="com-grupo">
     <div class="com-grupo-title"><i class="tc" style="background:${e.color || '#888'}"></i>${esc(e.nombre)}
       <span class="com-grupo-total" title="Comisión − anticipos − coste empresa de su nómina = lo que queda por repartir">${fmtEUR(quedaDe(e, filas, lineas, anticipos))}</span></div>
+    ${barraAbiertaHTML(e)}
     ${tablaFilasHTML(filas.filter(f => !f.excluido))}
     ${seccionManualHTML(e.id, lineas)}
     ${subtotalHTML(t)}
@@ -212,7 +280,7 @@ function resultadoHTML() {
     return `<div class="vacio">${esc(entrenadorDe(filtro)?.nombre || 'Este entrenador')} no está, por ahora, en el sistema de comisiones.</div>`;
   }
   const delEntr = e => [filas.filter(f => f.cliente.entrenador_id === e.id), lineas.filter(l => l.entrenador_id === e.id), anticipos.filter(a => a.entrenador_id === e.id)];
-  const grupos = entrenadores.map(e => grupoHTML(e, ...delEntr(e)));
+  const grupos = entrenadores.map(e => (cierreDe(e.id) ? grupoCerradoHTML(e, cierreDe(e.id)) : grupoHTML(e, ...delEntr(e))));
   if (filtro) return grupos.join('');
   return `${grupos.join('')}
     <div class="com-total-general">TOTAL POR REPARTIR <span>${fmtEUR(entrenadores.reduce((t, e) => t + quedaDe(e, ...delEntr(e)), 0))}</span></div>`;
@@ -368,6 +436,18 @@ export async function alGuardarNomina(el) {
   await guardarNomina(filaNomina(el.dataset.nom));
 }
 
+// Lo que se ve ahora de un entrenador y mes, como copia (para cerrarlo o para imprimir el borrador).
+function instantaneaDe(entrenadorId) {
+  const { config, filas, lineas, anticipos } = datos();
+  const entrenador = entrenadorDe(entrenadorId) || { id: entrenadorId, nombre: '' };
+  return instantaneaLiquidacion({
+    entrenador, mes: S.comisiones.mes, config,
+    filas: filas.filter(f => f.cliente.entrenador_id === entrenadorId), lineas: lineas.filter(l => l.entrenador_id === entrenadorId),
+    anticipos: anticipos.filter(a => a.entrenador_id === entrenadorId), nomina: nominaDe(entrenadorId),
+  });
+}
+const paraExportar = entrenadorId => { const cierre = cierreDe(entrenadorId); return { cierre, snap: cierre ? cierre.datos : instantaneaDe(entrenadorId) }; };
+
 const moverMesCom = n => { S.comisiones.mes = primerDiaMes(S.comisiones.mes + '-01', n).slice(0, 7); bus.repintar(); };
 
 export const accionesComisiones = {
@@ -435,6 +515,50 @@ export const accionesComisiones = {
     await S.api.eliminarAnticipo(a.id);
     S.comisiones.anticipos = S.comisiones.anticipos.filter(x => x.id !== a.id);
     refrescarTabla();
+  },
+  // Cerrar la liquidación (solo administrador): guarda una copia fija y bloquea el mes en la base de datos
+  'com-cerrar': async t => {
+    if (!esAdmin()) return;
+    const e = entrenadorDe(t.dataset.ent), mes = S.comisiones.mes;
+    const snap = instantaneaDe(t.dataset.ent), r = snap.reparto;
+    const nom = nominaDe(t.dataset.ent);
+    const ok = await dialogo({ titulo: 'Cerrar liquidación', ok: 'Cerrar y bloquear', mensaje: `<p>¿Cerrar la liquidación de <b>${esc(nombreMes(mes))}</b> de <b>${esc(e?.nombre || '')}</b>?</p>
+      <p>Comisión <b>${fmtEUR(r.comision)}</b>${r.anticipos ? ` − anticipos ${fmtEUR(r.anticipos)}` : ''}${r.coste ? ` − coste empresa ${fmtEUR(r.coste)}` : ''} = queda por repartir <b>${fmtEUR(r.queda)}</b>
+        (${fmtEUR(r.enNomina)} en nómina · ${fmtEUR(r.efectivo)} en efectivo).</p>
+      <p>Se guarda tal cual y <b>ya no se podrá modificar</b>: ni los bonos cobrados ese mes, ni los ajustes, anticipos y nómina de ese mes. Si hace falta corregir algo, podrás reabrirla (queda apuntado).</p>
+      ${r.descubierto ? `<p class="hint" style="color:var(--yellow)">⚠ La comisión no cubre la nómina (faltan ${fmtEUR(r.descubierto)}).</p>` : ''}` });
+    if (!ok) return;
+    if (nom) await S.api.guardarNominaComision({ entrenador_id: nom.entrenador_id, mes: nom.mes, bruto: nom.bruto, coste_empresa: nom.coste_empresa, parte_nomina: nom.parte_nomina });   // por si había algo sin soltar
+    const guardada = await S.api.cerrarLiquidacion({ entrenador_id: t.dataset.ent, mes, datos: { ...snap, cerrada_por: S.perfil.nombre } });
+    S.comisiones.cierres = [...(S.comisiones.cierres || []).filter(c => c.id !== guardada.id), guardada];
+    bus.repintar();
+    toast(`Liquidación de ${nombreMes(mes)} de ${e?.nombre || ''} cerrada`);
+  },
+  'com-reabrir': async t => {
+    if (!esAdmin()) return;
+    const cierre = cierreDe(t.dataset.ent), e = entrenadorDe(t.dataset.ent);
+    if (!cierre) return;
+    const ok = await dialogo({ titulo: 'Reabrir liquidación', ok: 'Reabrir', peligro: true, mensaje: `<p>¿Reabrir la liquidación de <b>${esc(nombreMes(cierre.mes))}</b> de <b>${esc(e?.nombre || '')}</b>?</p>
+      <p>Se desbloquea ese mes y vuelve a calcularse con los datos de ahora. <b>Queda apuntado que se reabrió.</b> Para guardarla de nuevo hay que volver a cerrarla.</p>` });
+    if (!ok) return;
+    const guardada = await S.api.reabrirLiquidacion(cierre.id);
+    S.comisiones.cierres = S.comisiones.cierres.map(c => (c.id === guardada.id ? guardada : c));
+    bus.repintar();
+    toast('Liquidación reabierta');
+  },
+  // Imprimir / guardar como PDF y exportar a Excel: de la copia fija si está cerrada, y si no, de lo que se ve ahora (borrador)
+  'com-imprimir': t => {
+    const { snap, cierre } = paraExportar(t.dataset.ent);
+    const url = URL.createObjectURL(new Blob([hojaLiquidacionHTML(snap, { cerrada: cierre, cerradaPor: snap.cerrada_por })], { type: 'text/html;charset=utf-8' }));
+    if (!window.open(url, '_blank')) toast('El navegador ha bloqueado la ventana de impresión: permite las ventanas emergentes para esta página.', true);
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+  },
+  'com-csv': t => {
+    const { snap, cierre } = paraExportar(t.dataset.ent);
+    const url = URL.createObjectURL(new Blob([csvLiquidacion(snap, { cerradaEl: cierre?.cerrada_el, borrador: !cierre })], { type: 'text/csv;charset=utf-8' }));
+    const a = Object.assign(document.createElement('a'), { href: url, download: nombreArchivo(snap, 'csv') });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   },
   // Entrenador: vuelve a lo que ha decidido el administrador (borra solo sus pruebas)
   'com-reset': async () => { S.comisiones.cargado = false; await cargarComisiones(); toast('Pruebas restablecidas'); },
