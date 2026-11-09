@@ -3,10 +3,10 @@ import { S, bus, esAdmin, entrenadorDe, nombreCompleto, entrenadorFiltroId, clie
 import { esc, nombreMes, mesCorto, dialogo, toast, fmtFechaDia, filtroEntrenadorHTML } from './util.js';
 import {
   hoyISO, addDias, lunesDe, primerDiaMes, ultimoDiaMes, parseISO, horaAMin, minAHora,
-  estadoEfectivo, repartirCarriles, buscarConflictos, marcasBono,
+  estadoEfectivo, repartirCarriles, marcasBono,
 } from './logica.js';
 import { HORA_INICIO_CALENDARIO, HORA_FIN_CALENDARIO, DURACION_SESION_MIN } from './config.js';
-import { modalSesion } from './modales.js';
+import { modalSesion, modalValoracion, conflictosDelDia } from './modales.js';
 
 const HPX = 52;                       // píxeles por hora en la vista semanal
 const DIAS = ['LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB', 'DOM'];
@@ -24,9 +24,15 @@ export async function cargarCalendario() {
   const { d1, d2 } = rango();
   const mi = ++token;
   bus.repintar();
-  const sesiones = await S.api.sesionesEntre(d1, d2, entrenadorFiltroId());
+  const filtro = entrenadorFiltroId();
+  // Las valoraciones (sql/24) son opcionales: si la tabla aún no existe, el calendario sigue como antes.
+  const [sesiones, valoraciones] = await Promise.all([
+    S.api.sesionesEntre(d1, d2, filtro),
+    S.api.valoracionesEntre(d1, d2, filtro).catch(() => []),
+  ]);
   if (mi !== token) return;
   S.cal.sesiones = sesiones;
+  S.cal.valoraciones = valoraciones.map(v => ({ ...v, esVal: true }));
   bus.repintar();
 }
 
@@ -38,7 +44,7 @@ function titulo() {
   return `${a.getDate()}${mismoMes ? '' : ' ' + mesCorto(d1).toUpperCase()} – ${b.getDate()} ${mesCorto(d2).toUpperCase()} ${b.getFullYear()}`;
 }
 
-const colorEntr = s => entrenadorDe(s.clientes?.entrenador_id)?.color || '#888';
+const colorEntr = s => entrenadorDe(s.entrenador_id || s.clientes?.entrenador_id)?.color || '#888';
 const mostrarEntr = () => esAdmin() && !entrenadorFiltroId();
 const pastilla = s => (mostrarEntr() ? `<i class="tc" style="background:${colorEntr(s)}"></i>` : '');
 // Penúltima y última sesión del bono de cada cliente: el entrenador ve de un vistazo cuándo avisar para renovar.
@@ -50,10 +56,13 @@ const nombreFicha = (s, texto, clase = '') => `<span class="nombre-ficha ${clase
 const iconoBono = s => { const m = marcaBono(s); return m ? `<span class="marca-bono" aria-label="${esc(m[1])}">${m[0]}</span>` : ''; };
 const tip = s => `${s.hora} · ${nombreCompleto(s.clientes)}${mostrarEntr() ? ' · ' + (entrenadorDe(s.clientes.entrenador_id)?.nombre || '') : ''} · ${ETIQUETA[estadoEfectivo(s)]}${s.nota ? ' · ' + s.nota : ''}${marcaBono(s) ? ' · ' + marcaBono(s)[1] : ''}`;
 
+// Valoración (invitado sin ficha): se pinta en amarillo fosforito para que se vea de lejos.
+const tipVal = v => `${v.hora} · ★ Valoración · ${v.nombre}${mostrarEntr() ? ' · ' + (entrenadorDe(v.entrenador_id)?.nombre || '') : ''}${v.nota ? ' · ' + v.nota : ''}`;
+
 function semanaHTML() {
   const { d1, d2 } = rango();
   const hoy = hoyISO();
-  const ses = S.cal.sesiones.filter(s => s.fecha >= d1 && s.fecha <= d2);
+  const ses = [...S.cal.sesiones, ...S.cal.valoraciones].filter(s => s.fecha >= d1 && s.fecha <= d2);
   let h0 = HORA_INICIO_CALENDARIO, h1 = HORA_FIN_CALENDARIO;
   for (const s of ses) {
     h0 = Math.min(h0, Math.floor(horaAMin(s.hora) / 60));
@@ -62,7 +71,10 @@ function semanaHTML() {
   const horas = Array.from({ length: h1 - h0 }, (_, i) => h0 + i);
   const cols = Array.from({ length: 7 }, (_, i) => addDias(d1, i));
 
-  const cabecera = cols.map((f, i) => `<div class="wk-dh ${f === hoy ? 'hoy' : ''}">${DIAS[i]} <b>${parseISO(f).getDate()}</b></div>`).join('');
+  const cabecera = cols.map((f, i) => {
+    const hayVal = ses.some(s => s.esVal && s.fecha === f);
+    return `<div class="wk-dh ${f === hoy ? 'hoy' : ''} ${hayVal ? 'con-val' : ''}">${DIAS[i]} <b>${parseISO(f).getDate()}</b>${hayVal ? '<span class="dh-val" title="Hay una valoración este día">★</span>' : ''}</div>`;
+  }).join('');
   const columnas = cols.map(f => {
     const items = ses.filter(s => s.fecha === f).map(s => {
       const ini = horaAMin(s.hora);
@@ -71,6 +83,13 @@ function semanaHTML() {
     const bloques = repartirCarriles(items).map(({ s, ini, fin, lane, lanes }) => {
       const top = (ini - h0 * 60) / 60 * HPX, alto = Math.max(20, (fin - ini) / 60 * HPX - 2);
       const w = 100 / lanes;
+      if (s.esVal) {
+        return `<div class="blk valoracion" data-acc="val-abrir" data-id="${s.id}" title="${esc(tipVal(s))}"
+          style="top:${top}px;height:${alto}px;left:calc(${lane * w}% + 1px);width:calc(${w}% - 2px)">
+        <div class="blk-h">${pastilla(s)}${minAHora(ini)}–${minAHora(fin)}</div>
+        <div class="blk-n">★ VALORACIÓN</div>
+        <div class="blk-n">${esc(s.nombre)}</div></div>`;
+      }
       return `<div class="blk ${estadoEfectivo(s)}" data-acc="ses-abrir" data-id="${s.id}" title="${esc(tip(s))}"
           style="top:${top}px;height:${alto}px;left:calc(${lane * w}% + 1px);width:calc(${w}% - 2px)">
         <div class="blk-h">${pastilla(s)}${minAHora(ini)}–${minAHora(fin)}${iconoBono(s)}</div>
@@ -93,16 +112,19 @@ function mesHTML() {
   const { d1, d2 } = rango();
   const hoy = hoyISO(), mesActual = S.cal.fecha.slice(0, 7);
   const porDia = new Map();
-  for (const s of S.cal.sesiones) {
+  for (const s of [...S.cal.sesiones, ...S.cal.valoraciones]) {
     if (!porDia.has(s.fecha)) porDia.set(s.fecha, []);
     porDia.get(s.fecha).push(s);
   }
   let celdas = '';
   for (let f = d1; f <= d2; f = addDias(f, 1)) {
-    const lista = (porDia.get(f) || []).sort((a, b) => a.hora.localeCompare(b.hora));
-    const pills = lista.slice(0, 3).map(s => `<div class="cell-sess ${estadoEfectivo(s)}" data-acc="ses-abrir" data-id="${s.id}" title="${esc(tip(s))}">${pastilla(s)}${s.hora}${nombreFicha(s, esc(s.clientes.nombre), 'pn')}${iconoBono(s)}</div>`).join('');
+    // las valoraciones van primero para que nunca queden escondidas tras el «+N más»
+    const lista = (porDia.get(f) || []).sort((a, b) => (b.esVal ? 1 : 0) - (a.esVal ? 1 : 0) || a.hora.localeCompare(b.hora));
+    const pills = lista.slice(0, 3).map(s => (s.esVal
+      ? `<div class="cell-sess valoracion" data-acc="val-abrir" data-id="${s.id}" title="${esc(tipVal(s))}">${pastilla(s)}★ ${s.hora} ${esc(s.nombre)}</div>`
+      : `<div class="cell-sess ${estadoEfectivo(s)}" data-acc="ses-abrir" data-id="${s.id}" title="${esc(tip(s))}">${pastilla(s)}${s.hora}${nombreFicha(s, esc(s.clientes.nombre), 'pn')}${iconoBono(s)}</div>`)).join('');
     const mas = lista.length > 3 ? `<div class="cell-mas" data-acc="dia-semana" data-fecha="${f}">+${lista.length - 3} más</div>` : '';
-    celdas += `<div class="cal-cell ${f.slice(0, 7) !== mesActual ? 'fuera' : ''} ${f === hoy ? 'today' : ''}" data-acc="dia-nuevo" data-fecha="${f}">
+    celdas += `<div class="cal-cell ${f.slice(0, 7) !== mesActual ? 'fuera' : ''} ${f === hoy ? 'today' : ''} ${lista.some(s => s.esVal) ? 'con-val' : ''}" data-acc="dia-nuevo" data-fecha="${f}">
       <div class="cell-num">${parseISO(f).getDate()}</div>${pills}${mas}</div>`;
   }
   return `<div class="cal-grid">${DIAS.map(d => `<div class="cal-dname">${d}</div>`).join('')}${celdas}</div>`;
@@ -112,6 +134,7 @@ function leyenda() {
   const items = [['reservada', 'var(--yellow)'], ['hecha', 'var(--green-light)'], ['auto', 'var(--blue-light)'], ['no_vino', '#cc4444']];
   let html = items.map(([k, c]) => `<div class="leg-item"><div class="leg-dot" style="background:${c}"></div>${ETIQUETA[k]}</div>`).join('');
   html += '<div class="leg-item">⚡ Penúltima del bono</div><div class="leg-item">🏁 Última del bono</div>';
+  html += '<div class="leg-item"><div class="leg-dot leg-val"></div>★ Valoración (invitado)</div>';
   if (mostrarEntr()) {
     html += S.entrenadores.map(e => `<div class="leg-item"><i class="tc" style="background:${e.color}"></i>${esc(e.nombre)}</div>`).join('');
   }
@@ -136,6 +159,7 @@ export function renderCalendario(el) {
           <button class="${S.cal.modo === 'semana' ? 'on' : ''}" data-acc="cal-modo" data-v="semana">Semana</button>
           <button class="${S.cal.modo === 'mes' ? 'on' : ''}" data-acc="cal-modo" data-v="mes">Mes</button>
         </div>
+        <button class="btn btn-secondary btn-sm btn-val" data-acc="val-nueva">★ Valoración</button>
         <button class="btn btn-primary btn-sm" data-acc="ses-nueva">+ Sesión</button>
       </div>
     </div>
@@ -199,14 +223,15 @@ function cancelarArrastre() {
   arrastre = null;
 }
 
+// Mueve una sesión o una valoración (s.esVal) a otro día/hora, avisando si se solapa con algo del mismo entrenador.
 async function moverSesion(s, fecha, hora) {
-  const existentes = await S.api.sesionesEntre(fecha, fecha, s.clientes.entrenador_id);
-  const conflictos = buscarConflictos({ fecha, hora, duracion_min: s.duracion_min }, existentes, s.id);
+  const entrenadorId = s.esVal ? s.entrenador_id : s.clientes.entrenador_id;
+  const conflictos = await conflictosDelDia({ fecha, hora, duracion_min: s.duracion_min }, entrenadorId, s.id);
   if (conflictos.length) {
     const lista = conflictos.map(x => `<li><b>${esc(x.hora)}</b> · ${esc(nombreCompleto(x.clientes))}</li>`).join('');
     const ok = await dialogo({
       titulo: '⚠ Solape de horario',
-      mensaje: `<p>${esc(entrenadorDe(s.clientes.entrenador_id)?.nombre || 'El entrenador')} ya tiene sesión a esa hora:</p><ul class="dlg-lista">${lista}</ul><p>¿Mover igualmente?</p>`,
+      mensaje: `<p>${esc(entrenadorDe(entrenadorId)?.nombre || 'El entrenador')} ya tiene sesión a esa hora:</p><ul class="dlg-lista">${lista}</ul><p>¿Mover igualmente?</p>`,
       ok: 'Mover igualmente',
     });
     if (!ok) return;
@@ -217,14 +242,14 @@ async function moverSesion(s, fecha, hora) {
   Object.assign(s, cambios);              // se ve al instante; si falla, se deshace
   bus.repintar();
   try {
-    await S.api.actualizarSesion(s.id, cambios);
+    await (s.esVal ? S.api.actualizarValoracion(s.id, cambios) : S.api.actualizarSesion(s.id, cambios));
   } catch (err) {
     Object.assign(s, previo);
     bus.repintar();
     throw err;
   }
   await bus.recargar();
-  toast(`${nombreCompleto(s.clientes)} → ${fmtFechaDia(fecha)} · ${hora}`);
+  toast(`${s.esVal ? '★ ' + s.nombre : nombreCompleto(s.clientes)} → ${fmtFechaDia(fecha)} · ${hora}`);
 }
 
 export function iniciarArrastre() {
@@ -233,7 +258,7 @@ export function iniciarArrastre() {
     clienteBajoPuntero = e.target.closest?.('[data-acc="ses-ficha"]')?.dataset.cliente || null;
     const bloque = e.target.closest?.('.wk .blk');
     if (!bloque || e.button !== 0 || e.pointerType === 'touch' || arrastre) return;
-    const s = S.cal.sesiones.find(x => x.id === bloque.dataset.id);
+    const s = S.cal.sesiones.find(x => x.id === bloque.dataset.id) || S.cal.valoraciones.find(x => x.id === bloque.dataset.id);
     const wk = bloque.closest('.wk');
     if (!s || !wk) return;
     e.preventDefault();                    // evita seleccionar texto al arrastrar
@@ -296,6 +321,12 @@ export const accionesCalendario = {
   'cal-hoy': () => { S.cal.fecha = hoyISO(); return cargarCalendario(); },
   'cal-modo': t => { S.cal.modo = t.dataset.v; return cargarCalendario(); },
   'ses-nueva': () => modalSesion({ fecha: hoyISO() }),
+  'val-nueva': () => modalValoracion({ fecha: hoyISO() }),
+  'val-abrir': t => {
+    if (ignorarClic) return;
+    const v = S.cal.valoraciones.find(x => x.id === t.dataset.id);
+    if (v) modalValoracion({ valoracion: v });
+  },
   'ses-abrir': t => {
     if (ignorarClic) return;
     if (clienteBajoPuntero) return abrirFicha(clienteBajoPuntero);   // el clic era sobre el nombre (el bloque tenía el puntero capturado)

@@ -252,6 +252,17 @@ a.meta-chip:hover { border-color: var(--red); color: var(--text); }
 .cell-sess.no_vino, .blk.no_vino { background: rgba(139,32,32,.25); color: #e06060; border-color: var(--red); }
 .cell-sess.auto, .blk.auto { background: rgba(74,159,212,.16); color: var(--blue-light); border-color: var(--blue-light); }
 
+/* valoración (invitado sin ficha): amarillo fosforito, distinto del amarillo apagado de «reservada» */
+.cell-sess.valoracion, .blk.valoracion { background: #f5ff00; color: #111; border-color: #ff5a00; font-weight: 700; box-shadow: 0 0 10px rgba(245,255,0,.55); }
+.blk.valoracion { border-left-width: 4px; z-index: 1; }
+.blk.valoracion .blk-h { opacity: 1; }
+.cal-cell.con-val { border-color: #f5ff00; }
+.leg-val { background: #f5ff00; box-shadow: 0 0 6px rgba(245,255,0,.7); }
+.dh-val { margin-left: 4px; color: #f5ff00; font-size: 13px; text-shadow: 0 0 6px rgba(245,255,0,.8); }
+.btn-val { border-color: #f5ff00; color: #f5ff00; }
+.btn-val:hover { background: #f5ff00; color: #111; }
+.tipo-nuevo { margin-bottom: 14px; }
+
 /* semana */
 .wk { border: 1px solid var(--border); background: var(--panel); overflow: auto; max-height: calc(100vh - 210px); }
 .wk-inner { min-width: 780px; }

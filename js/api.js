@@ -120,6 +120,24 @@ export async function actualizarSesiones(lista) {
 }
 export async function eliminarSesion(id) { comprobar(await sb.from('sesiones').delete().eq('id', id)); }
 
+// ── Valoraciones (sql/24): citas de invitados sin ficha de cliente; solo se ven en el calendario ──
+// Si la tabla aún no existe, el calendario sigue funcionando sin ellas.
+export async function valoracionesEntre(desde, hasta, entrenadorId = null) {
+  let q = sb.from('valoraciones').select('*').gte('fecha', desde).lte('fecha', hasta).order('fecha').order('hora');
+  if (entrenadorId) q = q.eq('entrenador_id', entrenadorId);
+  return comprobar(await q).map(hora);
+}
+export async function crearValoracion(v) { return hora(comprobar(await sb.from('valoraciones').insert(v).select().single())); }
+export async function actualizarValoracion(id, cambios) {
+  const filas = comprobar(await sb.from('valoraciones').update(cambios).eq('id', id).select());
+  if (!filas.length) throw new Error('No se ha podido cambiar la valoración (puede que no sea tuya o que ya no exista).');
+  return hora(filas[0]);
+}
+export async function eliminarValoracion(id) {
+  const filas = comprobar(await sb.from('valoraciones').delete().eq('id', id).select('id'));
+  if (!filas.length) throw new Error('No se ha podido eliminar la valoración (puede que no sea tuya o que ya no exista).');
+}
+
 // ── Comisiones (solo administrador; la base de datos también lo impone) ────
 export async function obtenerConfigComisiones() {
   return comprobar(await sb.from('comisiones_config').select('*').eq('id', 1).maybeSingle());

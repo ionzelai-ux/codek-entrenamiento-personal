@@ -10,7 +10,7 @@ export const S = {
   vista: 'calendario',          // calendario | clientes | resumen
   filtroEntr: 'todos',          // 'todos' o id de entrenador (solo admin lo cambia)
   cliSel: null,                 // id del cliente abierto en la ficha
-  cal: { modo: 'semana', fecha: hoyISO(), sesiones: [] },
+  cal: { modo: 'semana', fecha: hoyISO(), sesiones: [], valoraciones: [] },
   cli: { estado: 'todos', origen: 'todos', pago: 'todos', texto: '', archivados: false, pendientes: false },
   resumenMes: hoyISO().slice(0, 7),    // mes del «Detalle por mes»
   resumenBase: hoyISO().slice(0, 7),   // primer mes de las dos tarjetas de «Facturación prevista»

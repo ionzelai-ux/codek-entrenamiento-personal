@@ -181,13 +181,45 @@ const acciones = (texto, extra = '') => `
   </div>`;
 const bindCerrar = m => m.el.querySelectorAll('[data-cerrar]').forEach(b => b.addEventListener('click', m.cerrar));
 
+// Sesiones y valoraciones del entrenador que se pisan con `nueva` (misma fecha, hora y duración). Las valoraciones
+// se devuelven con forma de sesión (clientes.nombre = «★ Valoración · invitado») para listarlas igual en el aviso.
+export async function conflictosDelDia(nueva, entrenadorId, ignorarId = null) {
+  const [ses, vals] = await Promise.all([
+    S.api.sesionesEntre(nueva.fecha, nueva.fecha, entrenadorId),
+    S.api.valoracionesEntre(nueva.fecha, nueva.fecha, entrenadorId).catch(() => []),
+  ]);
+  const comoSesion = vals.map(v => ({ ...v, clientes: { nombre: `★ Valoración · ${v.nombre}`, apellidos: '' } }));
+  return buscarConflictos(nueva, [...ses, ...comoSesion], ignorarId);
+}
+const avisoSolape = (entrenadorId, conflictos) => {
+  const lista = conflictos.map(x => `<li><b>${esc(x.hora)}</b> · ${esc(nombreCompleto(x.clientes))}</li>`).join('');
+  return `<p>${esc(entrenadorDe(entrenadorId)?.nombre || 'El entrenador')} ya tiene sesión a esa hora:</p><ul class="dlg-lista">${lista}</ul><p>¿Guardar igualmente?</p>`;
+};
+
+// Al crear algo en el calendario se elige si es la sesión de un cliente o la valoración de un invitado.
+const tipoNuevoHTML = activo => `<div class="seg tipo-nuevo" data-tipo-nuevo>${[['sesion', 'Sesión de cliente'], ['valoracion', '★ Valoración (invitado)']].map(([v, l]) =>
+  `<button type="button" data-v="${v}" class="${v === activo ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+function bindTipoNuevo(m, form, activo) {
+  m.el.querySelector('[data-tipo-nuevo]')?.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b || b.dataset.v === activo) return;
+    const datos = { fecha: form.elements.fecha.value || hoyISO(), hora: form.elements.hora.value };
+    m.cerrar();
+    (b.dataset.v === 'valoracion' ? modalValoracion : modalSesion)(datos);
+  });
+}
+
 // ── Sesión ────────────────────────────────────────────────────────────────
 export function modalSesion({ sesion = null, fecha = hoyISO(), hora = '', clienteId = null } = {}) {
   const edit = !!sesion;
   const filtro = entrenadorFiltroId();
   const elegibles = S.clientes.filter(c => (edit ? c.id === sesion.cliente_id
     : c.activo && c.estado === 'efectivo' && (!filtro || c.entrenador_id === filtro)));
-  if (!elegibles.length) { toast('No hay clientes efectivos a los que añadir sesiones.', true); return; }
+  if (!elegibles.length) {
+    if (!edit) return modalValoracion({ fecha, hora });   // sin clientes a los que añadir sesión, lo que se puede apuntar es una valoración
+    toast('No hay clientes efectivos a los que añadir sesiones.', true);
+    return;
+  }
   const seleccionado = edit ? sesion.cliente_id : (clienteId || elegibles[0].id);
   const etiqueta = c => nombreCompleto(c) + (esAdmin() && !filtro ? ` · ${entrenadorDe(c.entrenador_id)?.nombre || ''}` : '');
   const efectivo = edit ? estadoEfectivo(sesion) : null;
@@ -195,6 +227,7 @@ export function modalSesion({ sesion = null, fecha = hoyISO(), hora = '', client
   const m = abrirModal(`
     <div class="modal-title">${edit ? 'Sesión' : 'Nueva sesión'}</div>
     <form novalidate>
+      ${edit ? '' : tipoNuevoHTML('sesion')}
       <div class="form-group"><label class="form-label">Cliente</label>
         <select class="form-input" name="cliente_id" ${edit ? 'disabled' : ''}>
           ${elegibles.map(c => `<option value="${c.id}" ${c.id === seleccionado ? 'selected' : ''}>${esc(etiqueta(c))}</option>`).join('')}
@@ -217,6 +250,7 @@ export function modalSesion({ sesion = null, fecha = hoyISO(), hora = '', client
   const form = m.el.querySelector('form');
   bindSeg(m.el);
   bindCerrar(m);
+  bindTipoNuevo(m, form, 'sesion');
 
   m.el.querySelector('[data-borrar]')?.addEventListener('click', async () => {
     const ok = await dialogo({ titulo: 'Eliminar sesión', mensaje: '<p>¿Eliminar esta sesión? No se puede deshacer.</p>', ok: 'Eliminar', peligro: true });
@@ -238,15 +272,9 @@ export function modalSesion({ sesion = null, fecha = hoyISO(), hora = '', client
       estado: segVal(m.el, 'estado'), nota: form.elements.nota.value.trim() || null,
     };
 
-    const existentes = await S.api.sesionesEntre(f, f, cli.entrenador_id);
-    const conflictos = buscarConflictos({ ...datos, cliente_id: cid }, existentes, sesion?.id);
+    const conflictos = await conflictosDelDia({ ...datos, cliente_id: cid }, cli.entrenador_id, sesion?.id);
     if (conflictos.length) {
-      const lista = conflictos.map(x => `<li><b>${esc(x.hora)}</b> · ${esc(nombreCompleto(x.clientes))}</li>`).join('');
-      const ok = await dialogo({
-        titulo: '⚠ Solape de horario',
-        mensaje: `<p>${esc(entrenadorDe(cli.entrenador_id)?.nombre || 'El entrenador')} ya tiene sesión a esa hora:</p><ul class="dlg-lista">${lista}</ul><p>¿Guardar igualmente?</p>`,
-        ok: 'Guardar igualmente',
-      });
+      const ok = await dialogo({ titulo: '⚠ Solape de horario', mensaje: avisoSolape(cli.entrenador_id, conflictos), ok: 'Guardar igualmente' });
       if (!ok) return;
     }
     const antes = edit ? ocupaCredito(estadoEfectivo(sesion)) : false;
@@ -263,6 +291,69 @@ export function modalSesion({ sesion = null, fecha = hoyISO(), hora = '', client
     m.cerrar();
     await bus.recargar();
     toast('Sesión guardada');
+  });
+}
+
+// ── Valoración (invitado sin ficha) ───────────────────────────────────────
+// Una cita de alguien que viene a una valoración: solo nombre, entrenador, día y hora. No lleva bono, ni cobro, ni cuenta
+// en comisiones o previsiones; se ve en el calendario en amarillo fosforito (sql/24_valoraciones.sql).
+export function modalValoracion({ valoracion = null, fecha = hoyISO(), hora = '' } = {}) {
+  const edit = !!valoracion;
+  const admin = esAdmin();
+  const entrenadorIni = edit ? valoracion.entrenador_id : (entrenadorFiltroId() || S.entrenadores[0]?.id || S.perfil.id);
+  const m = abrirModal(`
+    <div class="modal-title">${edit ? '★ Valoración' : 'Nueva valoración'}</div>
+    <form novalidate>
+      ${edit ? '' : tipoNuevoHTML('valoracion')}
+      <div class="form-group"><label class="form-label">Invitado *</label>
+        <input class="form-input" name="nombre" type="text" autocomplete="off" value="${esc(edit ? valoracion.nombre : '')}" placeholder="Nombre de quien viene a la valoración"></div>
+      ${admin ? `<div class="form-group"><label class="form-label">Entrenador</label>
+        <select class="form-input" name="entrenador_id">${S.entrenadores.map(e =>
+          `<option value="${e.id}" ${e.id === entrenadorIni ? 'selected' : ''}>${esc(e.nombre)}</option>`).join('')}</select></div>`
+        : `<input type="hidden" name="entrenador_id" value="${esc(S.perfil.id)}">`}
+      <div class="form-row3">
+        <div class="form-group"><label class="form-label">Fecha</label><input class="form-input" name="fecha" type="date" value="${edit ? valoracion.fecha : fecha}"></div>
+        <div class="form-group"><label class="form-label">Hora</label><input class="form-input" name="hora" type="time" value="${edit ? valoracion.hora : hora}"></div>
+        <div class="form-group"><label class="form-label">Duración</label>
+          <select class="form-input" name="duracion_min">${[30, 45, 60, 75, 90, 120].map(n =>
+            `<option value="${n}" ${n === (edit ? valoracion.duracion_min : DURACION_SESION_MIN) ? 'selected' : ''}>${n} min</option>`).join('')}</select></div>
+      </div>
+      <div class="form-group"><label class="form-label">Nota (opcional)</label>
+        <input class="form-input" name="nota" type="text" value="${esc(edit ? valoracion.nota : '')}" placeholder="Teléfono, objetivo, lesiones..."></div>
+      ${acciones('Guardar', edit ? '<button type="button" class="btn btn-danger" data-borrar>Eliminar</button>' : '')}
+    </form>`);
+  const form = m.el.querySelector('form');
+  bindCerrar(m);
+  bindTipoNuevo(m, form, 'valoracion');
+
+  m.el.querySelector('[data-borrar]')?.addEventListener('click', async () => {
+    const ok = await dialogo({ titulo: 'Eliminar valoración', mensaje: `<p>¿Eliminar la valoración de ${esc(valoracion.nombre)}? No se puede deshacer.</p>`, ok: 'Eliminar', peligro: true });
+    if (!ok) return;
+    await S.api.eliminarValoracion(valoracion.id);
+    m.cerrar();
+    await bus.recargar();
+    toast('Valoración eliminada');
+  });
+
+  alEnviar(m, form, async () => {
+    const f = form.elements.fecha.value, h = form.elements.hora.value, nombre = form.elements.nombre.value.trim();
+    if (!nombre) throw new Error('Indica el nombre del invitado');
+    if (!f) throw new Error('Indica la fecha');
+    if (!h) throw new Error('Indica la hora');
+    const datos = {
+      entrenador_id: form.elements.entrenador_id.value, nombre, fecha: f, hora: h,
+      duracion_min: Number(form.elements.duracion_min.value), nota: form.elements.nota.value.trim() || null,
+    };
+    const conflictos = await conflictosDelDia(datos, datos.entrenador_id, valoracion?.id);
+    if (conflictos.length) {
+      const ok = await dialogo({ titulo: '⚠ Solape de horario', mensaje: avisoSolape(datos.entrenador_id, conflictos), ok: 'Guardar igualmente' });
+      if (!ok) return;
+    }
+    if (edit) await S.api.actualizarValoracion(valoracion.id, datos);
+    else await S.api.crearValoracion(datos);
+    m.cerrar();
+    await bus.recargar();
+    toast('Valoración guardada');
   });
 }
 

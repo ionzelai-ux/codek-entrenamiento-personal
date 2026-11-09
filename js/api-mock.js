@@ -410,6 +410,39 @@ export async function registrarCobroSesiones({ bono, sesionIds }) {
 }
 export async function eliminarSesion(id) { sesiones.splice(sesiones.findIndex(s => s.id === id), 1); }
 
+// Valoraciones (como sql/24): el administrador ve todas; cada entrenador solo las suyas.
+const valoraciones = [];
+const veVal = v => actual.rol === 'admin' || v.entrenador_id === actual.id;
+export async function valoracionesEntre(desde, hasta, entrenadorId = null) {
+  return clonar(valoraciones
+    .filter(v => veVal(v) && v.fecha >= desde && v.fecha <= hasta && (!entrenadorId || v.entrenador_id === entrenadorId))
+    .sort((a, b) => a.fecha.localeCompare(b.fecha) || a.hora.localeCompare(b.hora)));
+}
+function comprobarValoracion(v) {
+  if (!String(v.nombre || '').trim()) throw new Error('Indica el nombre del invitado');
+  if (actual.rol !== 'admin' && v.entrenador_id !== actual.id) throw new Error('Solo puedes apuntar valoraciones a tu nombre');
+}
+export async function crearValoracion(v) {
+  comprobarValoracion(v);
+  const n = { id: nuevoId(), duracion_min: 60, nota: null, ...v };
+  valoraciones.push(n);
+  return clonar(n);
+}
+export async function actualizarValoracion(id, cambios) {
+  const v = valoraciones.find(x => x.id === id);
+  if (!v || !veVal(v)) throw new Error('No se ha podido cambiar la valoración (puede que no sea tuya o que ya no exista).');
+  comprobarValoracion({ ...v, ...cambios });
+  Object.assign(v, cambios);
+  return clonar(v);
+}
+export async function eliminarValoracion(id) {
+  const i = valoraciones.findIndex(x => x.id === id);
+  if (i < 0 || !veVal(valoraciones[i])) throw new Error('No se ha podido eliminar la valoración (puede que no sea tuya o que ya no exista).');
+  valoraciones.splice(i, 1);
+}
+// Demo: una valoración mañana a las 9:00 con Eduardo
+valoraciones.push({ id: nuevoId(), entrenador_id: 'p-edu', nombre: 'Invitada Demo', fecha: addDias(hoyISO(), 1), hora: '09:00', duracion_min: 60, nota: 'Valoración' });
+
 // Avisos de cobro de clientes que pagan después (como sql/20): el entrenador avisa de los suyos; el administrador los valida o rechaza.
 const cobrosAvisados = [];
 export async function listarCobrosAvisados() {

@@ -156,6 +156,13 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   reparte nada. Si falta la nómina del mes hay un botón para copiar la del mes anterior. El IRPF no se calcula (se trabaja en bruto). Solo el
   administrador lo guarda; cada entrenador ve lo suyo y puede probar cuánto pasar a nómina (no se guarda). Ya no se elige «efectivo / nómina»
   bono a bono. Los datos reales de las nóminas no van en este repositorio (ver el script privado `09_nomina_eduardo_octubre.sql`).
+- **Valoraciones de invitados** (`sql/24_valoraciones.sql`): alguien que viene a una valoración no tiene ficha. En el calendario, al crear algo
+  (botón **«★ Valoración»**, **«+ Sesión»** o un clic en un hueco) se elige **«Sesión de cliente» o «★ Valoración (invitado)»**: solo nombre,
+  entrenador (lo elige el administrador; cada entrenador apunta las suyas), día, hora, duración y una nota. Se pinta en **amarillo fosforito**
+  con «★ VALORACIÓN» en la semana y en el mes, y el día lleva una ★ en la cabecera, para que el entrenador la vea de lejos. Se puede
+  arrastrar a otra hora o día, editar y borrar; avisa de solapes con sus sesiones y con otras valoraciones. **No cuenta** en bonos, créditos,
+  comisiones, previsiones ni Resumen. Cada entrenador ve solo las suyas; el administrador, todas. Sin ejecutar el SQL, el calendario sigue
+  funcionando como antes (sin valoraciones).
 - **Cerrar la liquidación** (`sql/23_cerrar_liquidaciones.sql`): en Comisiones, cada entrenador tiene el botón «🔒 Cerrar liquidación». Guarda
   una **copia fija** del mes (bonos, comisiones, ajustes manuales, anticipos, nómina y reparto) y la bloquea **también en la base de datos**:
   mientras esté cerrada no se pueden cambiar los ajustes por bono, las líneas manuales, los anticipos ni la nómina de ese mes, ni el importe,
