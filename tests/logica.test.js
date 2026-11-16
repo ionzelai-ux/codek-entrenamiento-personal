@@ -400,6 +400,28 @@ test('deuda diferida: al cobrar 2 sesiones elegidas, la deuda baja justo esas 2 
   assert.deepEqual([d.n, d.importe, d.cobradas, d.cobrado], [3, 105, 2, 70]);
 });
 
+test('pago por adelantado: una reservada sin hacer se puede cobrar, no cuenta como deuda y al hacerse no vuelve a deberse', () => {
+  // Quien aún no ha hecho ninguna sesión y paga la que tiene reservada
+  const ani = clienteDiferida({ sesiones: [sx('r', '2026-10-05', '11:00', 'reservada')] });
+  const d = deudaDiferida(ani, AHORA_REV);
+  assert.deepEqual([d.n, d.debe, d.importe], [0, false, 0], 'sin nada hecho no debe nada');
+  assert.deepEqual(d.porAdelantar.map(s => s.id), ['r'], 'pero la reservada se puede cobrar por adelantado');
+  const plan = planCobroSesiones(ani, ['r'], { fecha: '2026-10-02', metodo: 'efectivo' });
+  assert.deepEqual([plan.sesionIds, plan.bono.precio, plan.bono.sesiones, plan.bono.pagado_el], [['r'], 35, 1, '2026-10-02']);
+  // ya cobrada: deja de ser adelantable y, cuando se haga, tampoco queda como deuda
+  const cobrada = { ...ani, bonos: [{ id: 'cb', ...plan.bono }], sesiones: [{ ...ani.sesiones[0], cobro_bono_id: 'cb' }] };
+  assert.equal(deudaDiferida(cobrada, AHORA_REV).porAdelantar.length, 0);
+  const hecha = { ...cobrada, sesiones: [{ ...cobrada.sesiones[0], estado: 'hecha' }] };
+  const dh = deudaDiferida(hecha, AHORA_REV);
+  assert.deepEqual([dh.n, dh.debe, dh.cobradas, dh.cobrado], [0, false, 1, 35]);
+});
+
+test('pago por adelantado: las reservadas van aparte de lo que ya debe, las «no vino» no se adelantan y a cuenta no lo usa', () => {
+  const d = deudaDiferida(clienteDiferida(), AHORA_REV);   // 5 hechas + 1 no vino + 1 reservada (2026-10-05)
+  assert.deepEqual([d.n, d.importe, d.porAdelantar.map(s => s.id)], [5, 175, ['6']]);
+  assert.equal(deudaDiferida(clienteACuenta(), AHORA_REV).porAdelantar, undefined);
+});
+
 test('cobro: el importe se puede cambiar (descuento) y no hay plan sin sesiones elegidas', () => {
   const c = clienteDiferida();
   assert.equal(planCobroSesiones(c, ['1', '2'], { importe: 60, fecha: '2026-10-02', metodo: 'tarjeta' }).bono.precio, 60);

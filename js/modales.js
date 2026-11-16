@@ -1089,10 +1089,12 @@ export function modalTarifaDiferido(c, modo) {
 // ya pagado y enlaza a él esas sesiones, así que el cobro entra solo en el Resumen y en Comisiones.
 export function modalCobrarSesiones(c) {
   const d = c && deudaDiferida(c);
-  if (!d || !d.n) { toast('Este cliente no tiene sesiones por cobrar.', true); return; }
+  const adelantables = d?.porAdelantar || [];   // reservadas aún sin hacer: se pueden cobrar por adelantado
+  if (!d || !(d.n || adelantables.length)) { toast('Este cliente no tiene sesiones por cobrar.', true); return; }
+  const todas = [...d.pendientes, ...adelantables];
   const m = abrirModal(`
     <div class="modal-title">Marcar sesiones como cobradas</div>
-    <p class="sub">${esc(nombreCompleto(c))} · debe ${d.n} ${d.n === 1 ? 'sesión' : 'sesiones'}${d.importe === null ? ' (sin tarifa)' : ` · ${esc(fmtEUR(d.importe))}`}</p>
+    <p class="sub">${esc(nombreCompleto(c))} · ${d.n ? `debe ${d.n} ${d.n === 1 ? 'sesión' : 'sesiones'}${d.importe === null ? ' (sin tarifa)' : ` · ${esc(fmtEUR(d.importe))}`}` : 'no debe nada de lo hecho'}${adelantables.length ? ` · ${adelantables.length} ${adelantables.length === 1 ? 'reservada' : 'reservadas'} (se pueden cobrar por adelantado)` : ''}</p>
     <form novalidate>
       <div class="section-mini">¿Qué sesiones te han pagado?</div>
       <div class="sel-rapida" data-selrapida>Marcar:
@@ -1118,13 +1120,16 @@ export function modalCobrarSesiones(c) {
   const leerImporte = () => { const t = form.elements.importe.value.trim().replace(',', '.'); const n = Number(t); return t === '' || !Number.isFinite(n) ? NaN : n; };
 
   function pintar() {
-    lista.innerHTML = d.pendientes.map((s, i) => `<label class="gen-fila"><input type="checkbox" data-i="${i}" ${marcado.has(s.id) ? 'checked' : ''}>
-      <span class="gf-f">${fmtFechaDia(s.fecha)}</span><span class="gf-h">${esc(s.hora)}</span>${d.tarifa === null ? '' : `<span class="gf-h">${esc(fmtEUR(d.tarifa))}</span>`}</label>`).join('');
+    const fila = (s, i) => `<label class="gen-fila"><input type="checkbox" data-i="${i}" ${marcado.has(s.id) ? 'checked' : ''}>
+      <span class="gf-f">${fmtFechaDia(s.fecha)}</span><span class="gf-h">${esc(s.hora)}</span>${d.tarifa === null ? '' : `<span class="gf-h">${esc(fmtEUR(d.tarifa))}</span>`}</label>`;
+    lista.innerHTML = d.pendientes.map((s, i) => fila(s, i)).join('')
+      + (adelantables.length ? `<div class="section-mini">Reservadas · pago por adelantado</div>${adelantables.map((s, i) => fila(s, d.pendientes.length + i)).join('')}` : '');
     const n = marcado.size;
+    const nHechas = d.pendientes.filter(s => marcado.has(s.id)).length;   // lo que se salda de la deuda (las adelantadas no la reducen)
     if (!importeAMano) form.elements.importe.value = n ? sugerido(n) : '';
     const imp = leerImporte();
     resumen.innerHTML = n
-      ? `Cobras <b>${Number.isNaN(imp) ? '—' : esc(fmtEUR(imp))}</b> por ${n} ${n === 1 ? 'sesión' : 'sesiones'}. Quedarán <b>${d.n - n}</b> por cobrar${d.tarifa === null ? '' : ` (${esc(fmtEUR((d.n - n) * d.tarifa))})`}.`
+      ? `Cobras <b>${Number.isNaN(imp) ? '—' : esc(fmtEUR(imp))}</b> por ${n} ${n === 1 ? 'sesión' : 'sesiones'}${n > nHechas ? ` (${n - nHechas} por adelantado)` : ''}. Quedarán <b>${d.n - nHechas}</b> por cobrar${d.tarifa === null ? '' : ` (${esc(fmtEUR((d.n - nHechas) * d.tarifa))})`}.`
       : 'Marca las sesiones que te han pagado.';
     btn.disabled = n === 0;
     btn.textContent = `Cobrar ${n} ${n === 1 ? 'sesión' : 'sesiones'}`;
@@ -1132,7 +1137,7 @@ export function modalCobrarSesiones(c) {
   lista.addEventListener('change', e => {
     const i = e.target.dataset.i;
     if (i === undefined) return;
-    const id = d.pendientes[Number(i)].id;
+    const id = todas[Number(i)].id;
     if (e.target.checked) marcado.add(id); else marcado.delete(id);
     pintar();
   });
@@ -1140,7 +1145,7 @@ export function modalCobrarSesiones(c) {
     const b = e.target.closest('[data-sel]');
     if (!b) return;
     marcado.clear();
-    if (b.dataset.sel === 'todas') d.pendientes.forEach(s => marcado.add(s.id));
+    if (b.dataset.sel === 'todas') (d.n ? d.pendientes : todas).forEach(s => marcado.add(s.id));   // «Todas» = lo que debe; si no debe nada, las reservadas
     pintar();
   });
   form.elements.importe.addEventListener('input', () => { importeAMano = true; pintar(); });

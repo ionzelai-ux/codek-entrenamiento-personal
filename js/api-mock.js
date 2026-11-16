@@ -72,6 +72,10 @@ function sesion(c, fecha, hora, estado = 'reservada') {
     pago_diferido: 'aprobado', pago_diferido_modo: 'cuenta', tarifa_sesion: 54 });
   [-16, -13, -11, -8, -4].forEach(n => sesion(nora, addDias(lun, n), '10:00', 'hecha'));
   bono(nora, 2, 108, addDias(lun, -12), addDias(lun, -12), 'tarjeta', addDias(lun, -12));
+  // Paga después (por sesión, 40 €): todavía no ha hecho ninguna y tiene 1 reservada que quiere pagar por adelantado
+  const ada = cliente({ entrenador_id: 'p-edu', nombre: 'Ada', apellidos: 'Demo Adelanta', estado: 'efectivo', origen: 'externo', telefono: '600 000 012', lesiones: 'Ninguna',
+    pago_diferido: 'aprobado', tarifa_sesion: 40 });
+  sesion(ada, addDias(lun, 8), '09:00');
   // Eduardo pide que entrene y pague después; el administrador todavía no lo ha aprobado
   const teo = cliente({ entrenador_id: 'p-edu', nombre: 'Teo', apellidos: 'Demo Solicitud', estado: 'efectivo', origen: 'codek', telefono: '600 000 007', lesiones: 'Ninguna',
     pago_diferido: 'solicitado', tarifa_sesion: 30 });

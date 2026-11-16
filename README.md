@@ -131,7 +131,9 @@ Abre `index.html?demo` desde un servidor estático (`python -m http.server`): da
   y en el Resumen («Por cobrar · entrenan y pagan después»). Cuando paga, el administrador pulsa «Marcar como cobradas»,
   elige **qué sesiones** le han abonado (han venido 5 y han pagado 2: marca esas 2), el importe, la fecha y el método: se
   crea un bono de tipo `cobro` ya pagado y esas sesiones quedan enlazadas a él (`sesiones.cobro_bono_id`), así que el
-  cobro entra solo en «Cobrado» del Resumen y en Comisiones. «↩ Deshacer cobro» las devuelve a «por cobrar». Quien paga
+  cobro entra solo en «Cobrado» del Resumen y en Comisiones. También se pueden cobrar **por adelantado** las sesiones **reservadas**
+  que aún no se han hecho (sección «Reservadas · pago por adelantado» de ese mismo cuadro; no cuentan como deuda y, cuando se hacen,
+  no se vuelven a deber; «Todas» marca solo lo que ya debe). «↩ Deshacer cobro» las devuelve a «por cobrar». Quien paga
   después nunca pasa a «Renovar» ni necesita bono para no figurar con «info pendiente». Al **crear** un cliente (o convertir un potencial)
   se puede marcar «Entrena y paga después» y fijar el **precio acordado por sesión** (obligatorio): entonces no se pide bono; si lo
   marca un entrenador queda solicitado, si lo marca el administrador queda autorizado directamente.

@@ -114,8 +114,11 @@ export function deudaDiferida(c, ahora = new Date()) {
   const bonosNormales = (c.bonos || []).filter(b => (b.tipo || 'bono') !== 'cobro').reduce((t, b) => t + (Number(b.sesiones) || 0), 0);
   const pendientes = sinCobro.slice(Math.min(sinCobro.length, bonosNormales));   // lo que ningún bono ni cobro cubre
   const cobrado = (c.bonos || []).filter(b => b.tipo === 'cobro' && b.pagado_el).reduce((t, b) => t + (Number(b.precio) || 0), 0);
+  // Sesiones reservadas que todavía no se han hecho ni cobrado: se pueden cobrar por adelantado (no cuentan como deuda).
+  const porAdelantar = (c.sesiones || []).filter(s => estadoEfectivo(s, ahora) === 'reservada' && !s.cobro_bono_id)
+    .sort((a, b) => a.fecha.localeCompare(b.fecha) || a.hora.localeCompare(b.hora));
   return {
-    modo: 'sesion', pendientes, n: pendientes.length, tarifa, debe: pendientes.length > 0,
+    modo: 'sesion', pendientes, porAdelantar, n: pendientes.length, tarifa, debe: pendientes.length > 0,
     importe: tarifa === null ? null : redondeo(pendientes.length * tarifa),
     cobradas: hechas.length - sinCobro.length, cobrado: redondeo(cobrado), reservadas,
   };

@@ -260,7 +260,7 @@ function fichaHTML(c) {
         : (dif.debe ? `debe <b>${dif.n}</b> ${dif.n === 1 ? 'sesión' : 'sesiones'}${dif.importe === null ? ' (falta indicar su tarifa por sesión)' : ` (${fmtEUR(dif.importe)} a ${fmtEUR(dif.tarifa)}/sesión)`}` : 'no debe nada ahora mismo');
       const boton = !esAdmin() ? (puedeAvisarDif(c) ? botonAvisarDif(c) : '')
         : cuenta ? `<button class="btn btn-sm btn-cobrar" data-acc="cli-pago-recibido" data-id="${c.id}">💶 Pago recibido…</button>`
-        : dif.n ? `<button class="btn btn-sm btn-cobrar" data-acc="cli-cobrar-sesiones" data-id="${c.id}">💶 Marcar como cobradas…</button>` : '';
+        : (dif.n || dif.porAdelantar.length) ? `<button class="btn btn-sm btn-cobrar" data-acc="cli-cobrar-sesiones" data-id="${c.id}">💶 Marcar como cobradas…</button>` : '';
       alertas += `<div class="alert alert-diferido alert-flex"><span>💶 <b>PAGA DESPUÉS${cuenta ? ' · A CUENTA' : ''}</b> — ${texto}.</span>${boton}</div>`;
       for (const a of avisosDiferido(c)) {
         alertas += `<div class="alert alert-por-validar alert-flex"><span>🔔 <b>COBRO POR VALIDAR</b> — ${textoAvisoDif(a)}.${esAdmin() ? '' : ' Pendiente de que lo valide el administrador.'}</span>
